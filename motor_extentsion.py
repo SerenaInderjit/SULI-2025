@@ -38,7 +38,7 @@ class DynamicLookup(Device):
     lookupPairs = DynamicDeviceComponent(defn)
 
 
-class CustomMotor(SynAxis):
+class CustomMotor(EpicsMotor):
     pos_lookup = Cpt(DynamicLookup, "")
 
     def __init__(self, name):
@@ -63,7 +63,7 @@ class CustomMotor(SynAxis):
             print(f'    {pair.pair_name:_<15} : {pair.pair_val}')
 
 
-    def set(self, pos: str | float) -> MoveStatus:
+    def set(self, pos: str | float):
         if isinstance(pos, str):
             val = self.lookup_by_name(pos)
         else:
