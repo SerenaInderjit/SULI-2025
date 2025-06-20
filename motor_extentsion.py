@@ -41,8 +41,8 @@ class DynamicLookup(Device):
 class CustomMotor(EpicsMotor):
     pos_lookup = Cpt(DynamicLookup, "")
 
-    def __init__(self, name):
-        super().__init__(name=name)
+    def __init__(self, name, **kwargs):
+        super().__init__(**kwargs)
 
 
     def lookup_by_name(self, name: str) -> float:
