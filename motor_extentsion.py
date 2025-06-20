@@ -28,15 +28,15 @@ from collections import OrderedDict
 class DynamicLookup(Device):
     defn = OrderedDict({
         "pair1": (LookupPair, "", {"name_postfix" : "Pos-Sel.ONST", "val_postfix" : "Val:1-SP"}),
-        # "pair2": (LookupPair, "", {"name_postfix" : "Pos-Sel.TWST", "val_postfix" : "Val:2-SP"}),
-        # "pair3": (LookupPair, "", {"name_postfix" : "Pos-Sel.THST", "val_postfix" : "Val:3-SP"}),
-        # "pair4": (LookupPair, "", {"name_postfix" : "Pos-Sel.FOST", "val_postfix" : "Val:4-SP"}),
-        # "pair5": (LookupPair, "", {"name_postfix" : "Pos-Sel.FIST", "val_postfix" : "Val:5-SP"}),
-        # "pair6": (LookupPair, "", {"name_postfix" : "Pos-Sel.SIST", "val_postfix" : "Val:6-SP"}),
-        # "pair7": (LookupPair, "", {"name_postfix" : "Pos-Sel.SEST", "val_postfix" : "Val:7-SP"}),
-        # "pair8": (LookupPair, "", {"name_postfix" : "Pos-Sel.EIST", "val_postfix" : "Val:8-SP"}),
-        # "pair9": (LookupPair, "", {"name_postfix" : "Pos-Sel.NIST", "val_postfix" : "Val:9-SP"}),
-        # "pair10": (LookupPair, "", {"name_postfix" : "Pos-Sel.TEST", "val_postfix" : "Val:10-SP"})
+        "pair2": (LookupPair, "", {"name_postfix" : "Pos-Sel.TWST", "val_postfix" : "Val:2-SP"}),
+        "pair3": (LookupPair, "", {"name_postfix" : "Pos-Sel.THST", "val_postfix" : "Val:3-SP"}),
+        "pair4": (LookupPair, "", {"name_postfix" : "Pos-Sel.FRST", "val_postfix" : "Val:4-SP"}),
+        "pair5": (LookupPair, "", {"name_postfix" : "Pos-Sel.FVST", "val_postfix" : "Val:5-SP"}),
+        "pair6": (LookupPair, "", {"name_postfix" : "Pos-Sel.SXST", "val_postfix" : "Val:6-SP"}),
+        "pair7": (LookupPair, "", {"name_postfix" : "Pos-Sel.SVST", "val_postfix" : "Val:7-SP"}),
+        "pair8": (LookupPair, "", {"name_postfix" : "Pos-Sel.EIST", "val_postfix" : "Val:8-SP"}),
+        "pair9": (LookupPair, "", {"name_postfix" : "Pos-Sel.NIST", "val_postfix" : "Val:9-SP"}),
+        "pair10": (LookupPair, "", {"name_postfix" : "Pos-Sel.TEST", "val_postfix" : "Val:10-SP"})
     })
 
     lookupPairs = DynamicDeviceComponent(defn)
