@@ -1,0 +1,13 @@
+[workspace]
+channels = ["conda-forge"]
+name = "SULI-2025"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = ">=3.13.5,<3.14"
+ophyd = ">=1.10.7,<2"
+bluesky = ">=1.14.2,<2"
+databroker = ">=2.0.0b64,<3"
