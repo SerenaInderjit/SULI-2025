@@ -70,10 +70,11 @@ class MotorWithLookup(Device):
     def set_pos(self, pos: str | float):
         pair_lst = list(self.pos_lookup.get())
         val = pos
-        if isinstance(val, float):
+        if  not isinstance(val, str):
             for pair in pair_lst:
-                if pair.pair_val == val:
+                if float(pair.pair_val) == float(val):
                     val = pair.pair_name
+                    break
         return self.pos_sel.set(str(val))
 
 
@@ -83,7 +84,16 @@ class MotorWithLookup(Device):
         else:
             val = pos
         mv_sts = self.motor.set(val)
-        self.set_pos(pos)
+        
+        
+        # if (mv_sts.success):
+        #     self.set_pos(pos)
+        # else:
+        #     self.set_pos("Undefined")
+
+
+        print((self.motor.read()[(self.name) + '_motor_user_setpoint'][value]))
+        # self.set_pos(self.motor.read()[(self.name) + '_user_setpoint'][value])
         return mv_sts
 
 
