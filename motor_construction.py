@@ -2,7 +2,7 @@ from ophyd import EpicsMotor, sim, Device
 from ophyd import Component as Cpt, FormattedComponent as FCpt
 from ophyd.sim import make_fake_device, SynAxis
 from ophyd.signal import EpicsSignal
-from ophyd.status import MoveStatus
+from ophyd.status import MoveStatus, wait
 from ophyd.device import DynamicDeviceComponent
 from bluesky.plans import count, scan
 from bluesky.plan_stubs import mv
@@ -83,18 +83,16 @@ class MotorWithLookup(Device):
             val = self.lookup(pos)
         else:
             val = pos
+
+        self.set_pos("Undefined")
         mv_sts = self.motor.set(val)
-        
-        
-        # if (mv_sts.success):
-        #     self.set_pos(pos)
-        # else:
-        #     self.set_pos("Undefined")
 
-
-        print((self.motor.read()[(self.name) + '_motor_user_setpoint'][value]))
-        # self.set_pos(self.motor.read()[(self.name) + '_user_setpoint'][value])
+        wait(mv_sts)
+        curr_pos = (self.motor.read()[(self.name) + '_motor_user_setpoint']['value'])
+        self.set_pos(curr_pos)
+        
         return mv_sts
+
 
 
 class SlitsWithLookup(Device):
