@@ -31,7 +31,23 @@ from ophyd.sim import NullStatus
 
 import numpy as np
 
+def update_describe_typing(dic, obj):
+    """
+    Function for updating dictionary result of `describe` to include better typing.
+    Previous defaults did not use `dtype_str` and simply described an image as an array.
 
+    Parameters
+    ==========
+    dic: dict
+        Return dictionary of describe method
+    obj: OphydObject
+        Instance of plugin
+    """
+    key = obj.parent._image_name
+    cam_dtype = obj.parent.cam.data_type.get(as_string=True)
+    type_map = {'UInt8': '|u1', 'UInt16': '<u2', 'Float32':'<f4', "Float64":'<f8'}
+    if cam_dtype in type_map:
+        dic[key].setdefault('dtype_str', type_map[cam_dtype])
 
 class ExternalFileReference(Signal):
     """
@@ -148,8 +164,34 @@ class StandardProsilicaWithHDF5(StandardCam):
         super().__init__(*args, **kwargs)
         self.hdf5.kind = "normal"
 
+
+
+
 # HDF5 Camera
 cam_fs1_hdf5 = StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}', name = 'cam_fs1_hdf5')
+# Test wit RE(count([cam_fs1_hdf5]))
+
+
+for k in (f'stats{j}' for j in range(1, 6)):
+    cam_fs1_hdf5.read_attrs.append(k)
+    getattr(cam_fs1_hdf5, k).read_attrs = ['total']
+    getattr(cam_fs1_hdf5, k).total.kind = 'hinted'
+
+
+roi_params = ['.min_xyz', '.min_xyz.min_y', '.min_xyz.min_x',
+              '.size', '.size.y', '.size.x', '.name_']
+
+configuration_attrs_list = [] 
+
+configuration_attrs_list.extend(['roi' + str(i) + string for i in range(1,5) for string in roi_params])
+for attr in configuration_attrs_list:
+    getattr(cam_fs1_hdf5, attr).kind='config'
+
+cam_fs1_hdf5.configuration_attrs.extend(['roi1', 'roi2', 'roi3','roi4'])
+
+
+
+
 
 # Canting magnet readback value
 canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
