@@ -9,7 +9,7 @@ from typing import Union, Optional
 from functools import reduce
 
 import networkx as nx
-from ophyd import (EpicsScaler, EpicsSignal, EpicsSignalRO, Device, BlueskyInterface,
+from ophyd import (EpicsScaler, EpicsSignal, EpicsMotor, EpicsSignalRO, Device, BlueskyInterface,
                    SingleTrigger, HDF5Plugin, ImagePlugin, StatsPlugin,
                    ROIPlugin, TransformPlugin, OverlayPlugin, ProsilicaDetector, TIFFPlugin, Signal, Staged, CamBase)
 
@@ -30,6 +30,8 @@ from ophyd.sim import NullStatus
 
 
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 def update_describe_typing(dic, obj):
     """
@@ -233,3 +235,23 @@ class BPM(Device):
 
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm')
 
+
+
+img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
+fig, ax = plt.subplots()
+
+imgplot = ax.imshow(img)
+
+rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
+rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
+rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
+rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
+
+
+roi1 = ax.add_patch(rectangle1)
+roi2 = ax.add_patch(rectangle2)
+roi3 = ax.add_patch(rectangle3)
+roi4 = ax.add_patch(rectangle4)
+
+imgplot.set_cmap('jet')
+plt.show()
