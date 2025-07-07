@@ -49,7 +49,6 @@ class MotorWithLookup(Device):
     def __init__(self, prefix : str, *args, name = "", **kwargs):
         super().__init__(prefix, *args, name=name, **kwargs)
 
-    
 
     def lookup(self, name: str) -> float:
         pair_lst = list(self.pos_lookup.get())
@@ -87,10 +86,8 @@ class MotorWithLookup(Device):
 
         self.set_pos("Undefined")
         mv_sts = self.motor.set(val)
-
-        wait(mv_sts)
-        curr_pos = (self.motor.read()[(self.name) + '_motor_user_setpoint']['value'])
-        self.set_pos(curr_pos)
+        mv_sts.add_callback(self.set_pos)
+    
         
         return mv_sts
 
