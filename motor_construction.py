@@ -4,10 +4,13 @@ from ophyd.sim import make_fake_device, SynAxis
 from ophyd.signal import EpicsSignal
 from ophyd.status import MoveStatus, wait
 from ophyd.device import DynamicDeviceComponent
+from ophyd.ophydobj import OphydObject
 from bluesky.plans import count, scan
 from bluesky.plan_stubs import mv
 from bluesky.simulators import summarize_plan
 from bluesky.preprocessors import SupplementalData
+
+from collections import deque
 
 class LookupPair(Device):
     pair_name = FCpt(EpicsSignal, "{prefix}{self.name_postfix}", kind="config")
@@ -43,12 +46,12 @@ class MotorWithLookup(Device):
 
     pos_lookup = DynamicDeviceComponent(defn)
     motor = Cpt(EpicsMotor, "Mtr")
-    pos_sel = Cpt(EpicsSignal, "Pos-Sel", string=True)
+    pos_sel = Cpt(EpicsSignal, "Pos-Sel", kind = 'hinted', string=True)
     
 
     def __init__(self, prefix : str, *args, name = "", **kwargs):
         super().__init__(prefix, *args, name=name, **kwargs)
-
+        self.readings = deque(maxlen=5)
 
     def lookup(self, name: str) -> float:
         pair_lst = list(self.pos_lookup.get())
@@ -78,6 +81,11 @@ class MotorWithLookup(Device):
         return self.pos_sel.set(str(val))
 
 
+    def update_pos(self, status):
+        curr_pos = (self.motor.read()[self.name + '_motor_user_setpoint']['value'])
+        self.set_pos(curr_pos)
+
+
     def set(self, pos: str | float):
         if isinstance(pos, str):
             val = self.lookup(pos)
@@ -86,7 +94,7 @@ class MotorWithLookup(Device):
 
         self.set_pos("Undefined")
         mv_sts = self.motor.set(val)
-        mv_sts.add_callback(self.set_pos)
+        mv_sts.add_callback(self.update_pos)
     
         
         return mv_sts
@@ -132,49 +140,51 @@ class SlitsWithLookup(Device):
     def __init__(self, prefix : str, *args, name = "", **kwargs):
         super().__init__(prefix, *args, name=name, **kwargs)
 
-
-    def lookup(self, name: str):
+    def get_lookup(self):
         lst_x = list(self.pos_lookup_x.get())
         lst_y = list(self.pos_lookup_y.get())
         
-        filtered_dict = dict((lst_x[k].pair_name, (lst_x[k].pair_val, lst_y[k].pair_val)) for k in range(len(lst_x)) if lst_x[k].pair_name != "Undefined")
+        lookup = dict((lst_x[k].pair_name, (lst_x[k].pair_val, lst_y[k].pair_val)) for k in range(len(lst_x)) if lst_x[k].pair_name != "Undefined")
+        return lookup
+
+    def lookup(self, name: str):
+        lookup = self.get_lookup
         
-        
-        for pair_name in filtered_dict:
+        for pair_name in lookup:
             if pair_name == name:
-                return filtered_dict[pair_name]     
+                return lookup[pair_name]     
         raise ValueError (f"Could not find {name} in lookup table")
 
     
     
     def get_all_sizes(self):
-        lst_x = list(self.pos_lookup_x.get())
-        lst_y = list(self.pos_lookup_y.get())
-        
-        filtered_dict = dict((lst_x[k].pair_name, (lst_x[k].pair_val, lst_y[k].pair_val)) for k in range(len(lst_x)) if lst_x[k].pair_name != "Undefined")
-        
+        lookup = self.get_lookup()
 
-        length = len(filtered_dict)
+        length = len(lookup)
 
         print(f"{length} possible sizes:")
         print("----------------------------------")
-        for pair_name in filtered_dict:
-            print(f'    {pair_name:_<10} : {filtered_dict[pair_name]}')
+        for pair_name in lookup:
+            print(f'    {pair_name:_<10} : {lookup[pair_name]}')
 
 
     def set_pos(self, pos: str | tuple):
-        lst_x = list(self.pos_lookup_x.get())
-        lst_y = list(self.pos_lookup_y.get())
-        
-        filtered_dict = dict((lst_x[k].pair_name, (lst_x[k].pair_val, lst_y[k].pair_val)) for k in range(len(lst_x)) if lst_x[k].pair_name != "Undefined")
+        lookup = self.get_lookup()
+
         val = pos
         if isinstance(val, tuple):
-            for pair_name in filtered_dict:
-                pair_val = filtered_dict[pair_name]
+            for pair_name in lookup:
+                pair_val = lookup[pair_name]
                 if (float(pos[0]) == float(pair_val[0])) & (float(pos[1]) == float(pair_val[1])):
                     val = pair_name
         return self.pos_sel.set(str(val))
     
+
+    def update_pos(self, status):
+        _xpos = (self.x.read()[(self.name) + '_x_user_setpoint']['value'])
+        _ypos = (self.y.read()[(self.name) + '_y_user_setpoint']['value'])
+
+        self.set_pos((_xpos, _ypos))
 
     def set(self, size : str | tuple = None):
         if size is None:
@@ -205,10 +215,8 @@ class SlitsWithLookup(Device):
             x_sts = self.x.set(x_pos)
             y_sts = self.y.set(y_pos)
             mv_sts = x_sts & y_sts
-            wait(mv_sts)
+            mv_sts.add_callback(self.update_pos)
 
-            _xpos = (self.x.read()[(self.name) + '_x_user_setpoint']['value'])
-            _ypos = (self.y.read()[(self.name) + '_y_user_setpoint']['value'])
 
-            self.set_pos((_xpos, _ypos))
             return x_sts & y_sts
+        
