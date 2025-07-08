@@ -148,7 +148,7 @@ class SlitsWithLookup(Device):
         return lookup
 
     def lookup(self, name: str):
-        lookup = self.get_lookup
+        lookup = self.get_lookup()
         
         for pair_name in lookup:
             if pair_name == name:
