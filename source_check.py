@@ -201,8 +201,32 @@ canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
 # Phaser magnet motor
 phaser = EpicsMotor('SR:C23-MG:G1{MG:Phaser-Ax:Y}Mtr',name='phaser')
 
+
+
 # M1A mirror (csx1/startup/optics.py)
+
+class FMBHexapodMirrorAxis(PVPositioner):
+    readback = Cpt(EpicsSignalRO, 'Mtr_MON')
+    setpoint = Cpt(EpicsSignal, 'Mtr_POS_SP')
+    actuate = FmtCpt(EpicsSignal, '{self.parent.prefix}}}MOVE_CMD.PROC')
+    actual_value = 1
+    stop_signal = FmtCpt(EpicsSignal, '{self.parent.prefix}}}STOP_CMD.PROC')
+    stop_value = 1
+    done = FmtCpt(EpicsSignalRO, '{self.parent.prefix}}}BUSY_STS')
+    done_value = 0
+
+
+class FMBHexapodMirror(Device):
+    z = Cpt(FMBHexapodMirrorAxis, '-Ax:Z}')
+    y = Cpt(FMBHexapodMirrorAxis, '-Ax:Y}')
+    x = Cpt(FMBHexapodMirrorAxis, '-Ax:X}')
+    pit = Cpt(FMBHexapodMirrorAxis, '-Ax:Pit}')
+    yaw = Cpt(FMBHexapodMirrorAxis, '-Ax:Yaw}')
+    rol = Cpt(FMBHexapodMirrorAxis, '-Ax:Rol}')
+
+
 m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
+
 
 # Front End Slits
 
@@ -214,44 +238,111 @@ class acc_slit_cent(PVPositionerPC):
     setpoint = Cpt(EpicsSignal, 'center.VAL')
     readback = Cpt(EpicsSignalRO, 't2.D')
 
+class FEAxis(Device):
+    gap = FCpt(acc_slit, '{prefix}-Ax:{self.axis}')
+    cent = FCpt(acc_slit_cent, '{prefix}-Ax:{self.axis}')
 
-fe_slt_xgap = acc_slit('FE:C23A-OP{Slt:12-Ax:X}', name='fe_slt_xgap')
-fe_slt_ygap = acc_slit('FE:C23A-OP{Slt:12-Ax:Y}', name='fe_slt_ygap')
-fe_slt_xcent = acc_slit_cent('FE:C23A-OP{Slt:12-Ax:X}', name='fe_slt_xcent')
-fe_slt_ycent = acc_slit_cent('FE:C23A-OP{Slt:12-Ax:Y}', name='fe_slt_ycent')
+    def __init__(self, *args, axis : str, **kwargs):
+        self.axis = axis
+        super().__init__(*args, **kwargs)
+
+class FrontEndSlit(Device):
+    x = Cpt(FEAxis, '', axis = 'X')
+    y = Cpt(FEAxis, '', axis = 'Y')
+
+FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
+
+# EPUs 
+
+# (csx1/devices/epu.py)
+
+class EPUMotor(PVPositionerPC):
+    readback = Cpt(EpicsSignalRO, 'Pos-I')
+    setpoint = Cpt(EpicsSignal, 'Pos-SP')
+    stop_signal = FCpt(EpicsSignal,
+                        '{self._stop_prefix}{self._stop_suffix}-Mtr.STOP')
+    stop_value = 1
+
+    def __init__(self, *args, parent=None, stop_suffix=None, **kwargs):
+        self._stop_prefix = parent._epu_prefix
+        self._stop_suffix = stop_suffix
+        super().__init__(*args, parent=parent, **kwargs)
+
+class Interpolator(Device):
+    input = Cpt(EpicsSignal, 'Val:Inp1-SP')
+    input_offset = Cpt(EpicsSignal, 'Val:InpOff1-SP')
+    # {'Enabled', 'Disabled'}
+    input_link = Cpt(EpicsSignal, 'Enbl:Inp1-Sel', string=True)
+    input_pv = Cpt(EpicsSignal, 'Val:Inp1-SP.DOL$', string=True)
+    output = Cpt(EpicsSignalRO, 'Val:Out1-I')
+    # {'Enable', 'Disable'}
+    output_link = Cpt(EpicsSignalRO, 'Enbl:Out1-Sel', string=True)
+    output_pv = Cpt(EpicsSignal, 'Calc1.OUT$', string=True)
+    output_deadband = Cpt(EpicsSignal, 'Val:DBand1-SP')
+    output_drive = Cpt(EpicsSignalRO, 'Val:OutDrv1-I')
+    interpolation_status = Cpt(EpicsSignalRO, 'Sts:Interp1-Sts', string=True)
+    #table = Cpt(EpicsSignal, 'Val:Table-Sel', name='table')# this pv has no FLT
+
+class EPU(Device):
+    gap = Cpt(EPUMotor, '-Ax:Gap}', stop_suffix='-Ax:Gap}')
+    phase = Cpt(EPUMotor, '-Ax:Phase}', stop_suffix='-Ax:Phase}')
+    x_off = FCpt(EpicsSignalRO,'{self._ai_prefix}:FPGA:x_mm-I')
+    x_ang = FCpt(EpicsSignalRO,'{self._ai_prefix}:FPGA:x_mrad-I')
+    y_off = FCpt(EpicsSignalRO,'{self._ai_prefix}:FPGA:y_mm-I')
+    y_ang = FCpt(EpicsSignalRO,'{self._ai_prefix}:FPGA:y_mrad-I')
+    flt = Cpt(Interpolator, '-FLT}')
+    rlt = Cpt(Interpolator, '-RLT}')
+    table = Cpt(EpicsSignal, '}Val:Table-Sel', name='table')# this pv has no FLT
+
+    def __init__(self, *args, ai_prefix=None, epu_prefix=None, **kwargs):
+        self._ai_prefix = ai_prefix
+        self._epu_prefix = epu_prefix
+        super().__init__(*args, **kwargs)
+
+# (csx1/startup/accelerator.py)
+epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
+epu2 = EPU('XF:23ID-ID{EPU:2', epu_prefix='SR:C23-ID:G1A{EPU:2', ai_prefix='SR:C31-{AI}23-2', name='epu2', labels=['source'])
+
+
+# BPM
+
+class BPM_signal(Device):
+    setpoint = Cpt(EpicsSignalRO, '-SP')
+    deviation = Cpt(EpicsSignalRO, 'S-I')
+
+class BPMAxis(Device):
+    pos = FCpt(BPM_signal, '{prefix}Pos{self.axis}')
+    angle = FCpt(BPM_signal, '{prefix}Angle{self.axis}')
+
+    def __init__(self, *args, axis : str, **kwargs):
+        self.axis = axis
+        super().__init__(*args, **kwargs)
 
 class BPM(Device):
-    x_pos = Cpt(EpicsSignalRO, 'PosX-SP')
-    y_pos = Cpt(EpicsSignalRO, 'PosY-SP')
-    x_angle = Cpt(EpicsSignalRO, 'AngleX-SP')
-    y_angle = Cpt(EpicsSignalRO, 'AngleY-SP')
-
-
-    x_pos_dev = Cpt(EpicsSignalRO, 'PosXS-I', kind='config')
-    y_pos_dev = Cpt(EpicsSignalRO, 'PosYS-I', kind='config')
-    x_angle_dev = Cpt(EpicsSignalRO, 'AngleXS-I', kind='config')
-    y_angle_dev = Cpt(EpicsSignalRO, 'AngleYS-I', kind='config')
+    x = Cpt(BPMAxis, '', axis = 'X')
+    y = Cpt(BPMAxis, '', axis = 'Y')
 
 
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm')
 
 
+# Turn fluo screen scan into image with ROIs
+def make_fluo_img():
+    img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
+    fig, ax = plt.subplots()
 
-img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
-fig, ax = plt.subplots()
+    imgplot = ax.imshow(img)
 
-imgplot = ax.imshow(img)
-
-rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
-rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
-rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
-rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
+    rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
+    rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
+    rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
+    rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
 
 
-roi1 = ax.add_patch(rectangle1)
-roi2 = ax.add_patch(rectangle2)
-roi3 = ax.add_patch(rectangle3)
-roi4 = ax.add_patch(rectangle4)
+    roi1 = ax.add_patch(rectangle1)
+    roi2 = ax.add_patch(rectangle2)
+    roi3 = ax.add_patch(rectangle3)
+    roi4 = ax.add_patch(rectangle4)
 
-imgplot.set_cmap('jet')
-plt.show()
+    imgplot.set_cmap('jet')
+    plt.show()
