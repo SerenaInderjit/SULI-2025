@@ -11,33 +11,43 @@ from bluesky.simulators import summarize_plan
 from bluesky.preprocessors import SupplementalData
 from collections import OrderedDict
 
-def make_lookup_row(*args, col_suffixes: list[str], prefix : str, row_number : int, **kwargs):
+
+
+# Find out all 16 extensions and add them
+pos_sel_extensions = ["", "ONST", "TWST", "THST", "FRST", "FVST", "SXST", "SVST", "EIST", "NIST" ,"TEST"]
+
+
+def make_lookup_row(*args, col_suffixes: list[str], prefix : str, pos_sel_dev : str, row_number : int, **kwargs):
 
     defn = OrderedDict()
-    num_cols = len(col_suffixes)
 
     # Dynamic number of signals to represent the number of columns
-    for i in range(num_cols):
+    for i in range(len(col_suffixes)):
         pv = (prefix + "-" + col_suffixes[i] + "}Val:" + str(row_number) + "-SP")
 
-        valid_key_name = (col_suffixes[i]).replace(":", "_") # Key names can't have ":" for some reason # Make lowercase
-        defn[valid_key_name] = (EpicsSignal, pv, {})
+        
+        defn[f"motor{i}"] = (EpicsSignal, pv, {})
 
-    # defn = {"Ax:X" : (EpicsSignal, <X_val_pv>, {}),
-    #         "Ax:Y" : (EpicsSignal, <Y_val_pv>, {}), 
+
+    # defn = {"motor1" : (EpicsSignal, <X_val_pv>, {}),
+    #         "motor2" : (EpicsSignal, <Y_val_pv>, {}), 
     #           ...}
   
     class LookupRow(Device):
 
        
-        axes = DynamicDeviceComponent(defn)
+        row_values = DynamicDeviceComponent(defn)
+        row_key = Cpt(EpicsSignal, ((prefix + "-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[row_number])))
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)       
         
         def get_row(self):
             row = {}
-            for axis in defn:
-                row[axis] = getattr(self.axes, axis).get()
+            row_key_value = self.row_key.get()
+            row[row_key_value] = {}
+            for key in defn:
+                row[row_key_value][key] = getattr(self.row_values, key).get()
             return row
 
     return LookupRow
@@ -47,16 +57,16 @@ def make_lookup_row(*args, col_suffixes: list[str], prefix : str, row_number : i
 def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], prefix : str, **kwargs):
     defn = OrderedDict()
     
-    # Find out all 16 extensions and add them
-    pos_sel_extensions = ["", "ONST", "TWST", "THST", "FRST", "FVST", "SXST", "SVST", "EIST", "NIST" ,"TEST"]
-
     # Dynamic number of signals to represent the number of rows
-    for i in range(1, num_rows):
+    for i in range(1, num_rows + 1):
         
-        pos_name = "Row_" + EpicsSignal((prefix + "-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[i])).get().replace(" ", "_")
-        LookupRow = make_lookup_row(col_suffixes=col_suffixes, prefix=prefix, row_number=i)           # Possible to use one row class to instantiate all rows of the table? (row_number changes)
+        LookupRow = make_lookup_row(col_suffixes=col_suffixes, prefix=prefix, pos_sel_dev = pos_sel_dev, row_number=i)
+        defn[f"row{i}"] = (LookupRow, "", {"name" : f"row{i}"})
 
-        defn[pos_name] = (LookupRow, "", {"name" : "row{i}"})
+
+    # defn = {"row1" : (LookupRow, "", {"name" : "row1"}),
+    #         "row2" : (LookupRow, "", {"name" : "row2"}),
+    #          ...}
         
     class LookupTable(Device):
         
@@ -68,11 +78,10 @@ def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : l
 
         def get_table(self):
             table = {}
-            for row in defn:
-                curr_row = {}
-                for axis in col_suffixes:
-                    curr_row[(axis.replace(":", "_"))] = self.rows.read()[self.name + "_rows_" + row + "_axes_" + (axis.replace(":", "_"))]["value"]
-                table[row] = curr_row
+            for key in defn:
+                row = getattr(self.rows, key).get_row()
+                row_key = next(iter(row))
+                table[row_key] = row[row_key]
             return table
         
 
@@ -83,10 +92,17 @@ def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : l
 def make_motors (*args, prefix : str, col_suffixes : list[str], **kwargs):
     defn = OrderedDict()
 
-    for col_suffix in col_suffixes:
-        valid_key_name = (col_suffix).replace(":", "_") 
-        defn[valid_key_name] = (EpicsMotor, (prefix + "-" + col_suffix + "}Mtr"), {})
+
+    for i in range(len(col_suffixes)):
+        
+        defn[f"motor{i}"] = (EpicsMotor, (prefix + "-" + col_suffixes[i] + "}Mtr"), {})
     
+
+    # defn = {"motor0" : (EpicsMotor, <mtr0_pv>, {}),
+    #         "motor1" : (EpicsMotor, <mtr1_pv>, {}),
+    #          ...}
+
+
     class LookupMotors(Device):
         motors = DynamicDeviceComponent(defn)
 
@@ -95,12 +111,12 @@ def make_motors (*args, prefix : str, col_suffixes : list[str], **kwargs):
 
         def get_motors(self):
             motors = {}
-            for axis in defn:
-                curr_axis = {}
-                curr_axis["value"] = getattr(self.motors, axis).user_readback.get()
-                curr_axis["setpoint"] = getattr(self.motors, axis).user_setpoint.get()
+            for key in defn:
+                motor = {}
+                motor["value"] = getattr(self.motors, key).user_readback.get()
+                motor["setpoint"] = getattr(self.motors, key).user_setpoint.get()
                 
-                motors[axis] = curr_axis
+                motors[key] = motor
             return motors
 
     return LookupMotors
@@ -117,15 +133,15 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
 
         pos_lookup = Cpt(lookup_class, "")
         motors = Cpt(motors_class, "")
-
-
         pos_sel = Cpt(EpicsSignal, prefix + "-" + pos_sel_dev + "}Pos-Sel", kind = 'hinted', string=True)
     
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.precision = precision
+            self.motor_list = [getattr(self.motors.motors, motor) for motor in self.motors.get_motors().keys()]
         
+
         def lookup(self, name : str):
             lookup = self.pos_lookup.get_table()
 
@@ -136,6 +152,29 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
                     return lookup[pos_name]
             raise ValueError (f"Could not find {name} in lookup table")
                 
+
+        def lookup_by_values(self, pos : tuple[float]):
+            lookup = self.pos_lookup.get_table()
+            matched_entry = ""
+
+            for lookup_index in range(len(lookup)):
+                match = True
+                lookup_entry_key = list(lookup.keys())[lookup_index]
+                lookup_entry_values = list(lookup[lookup_entry_key].values())
+
+                for axis_index in range(len(pos)):
+                    if round(pos[axis_index], self.precision) != round(lookup_entry_values[axis_index], self.precision):
+                        match = False                    
+
+                if match == True:
+                    matched_entry = lookup_entry_key
+                    break
+
+            if matched_entry == "":
+                raise ValueError (f"Could not find {pos} in lookup")
+            else:
+                return matched_entry
+
         def get_all_positions(self):
             lookup = self.pos_lookup.get_table()
             length = len(lookup)
@@ -146,7 +185,6 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
                     print(f'    {pos_name:_<15} : {tuple(lookup[pos_name].values())}')
 
         def where_am_i(self):
-            lookup = self.pos_lookup.get_table()
             motors = self.motors.get_motors()
             pos_sel_val = self.pos_sel.get()
 
@@ -154,62 +192,30 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
                 print("Motor " + axis + " value: " + str(round(motors[axis]["value"], self.precision)))
             print("\nPos-Sel value: ", pos_sel_val)
 
-            matched_entry = ""
 
-            for index in range(len(lookup)):
-                match = True
-                lookup_entry_positions = list(lookup.values())[index]
-                
-                lookup_entry_name = list(lookup.keys())[index]
-                for axis_index in range(len(range(len(lookup_entry_positions)))):
-                    axis = list(motors.keys())[axis_index]
-                    axis_value = motors[axis]["value"]
-                    lookup_value = lookup_entry_positions[axis]
-                    if round(axis_value, self.precision) != round(lookup_value, self.precision):
-                        match = False
-
-                if match == True:
-                    matched_entry = lookup_entry_name.replace("Row_", "")
-                    break
-            
-            pos_sel_match = pos_sel_val == matched_entry
+            motor_values = tuple([motors[motor]['value'] for motor in motors.keys()])
+            try:
+                matched_entry = self.lookup_by_values(motor_values)
+            except ValueError:
+                matched_entry = ""
 
             
-            if (matched_entry == "") or (pos_sel_match == False):
+            if (matched_entry == "") or (pos_sel_val != matched_entry):
                 print("\nYour motor values and/or Pos-Sel do not match one of the preset positions")
                 print("Use " + self.name + ".get_all_positions() to see all preset positions.")
             else:
                 print("\nYour motor values matched the position: " + matched_entry + " = ", self.lookup(matched_entry))
 
-        
-
-
-
 
         def set_pos_sel(self, pos: str | tuple):
-            lookup = self.pos_lookup.get_table()
-
             if isinstance(pos, tuple):
-                for pos_name in lookup:
-                    print("pos: " + pos + " pos_name: " + pos_name)
-                    pos_tuple = tuple(lookup[pos_name].values())
-                    match = True
-                    for axis_index in range(len(pos_tuple) - 1):
-                        if float(pos[axis_index]) != float(pos_tuple[axis_index]):
-                            print("<" + str(float(pos[axis_index]))  + "   " + str(float(pos_tuple[axis_index])) + ">")
-                            match = False
-                    if match == True:
-                        pos = pos_name
-                        break
-
+                pos = self.lookup_by_values(pos)
             
             return self.pos_sel.set(str(pos))
         
-        def update_pos(self, status):
-            
+        def sync_pos_sel(self, status = None):
             motors = self.motors.get_motors()
             motor_values = tuple([motors[axis]["setpoint"] for axis in motors])
-            print(motor_values)
             self.set_pos_sel(motor_values)
         
         def set(self, size : str | tuple):
@@ -220,23 +226,21 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
             
 
             motors = self.motors.get_motors()
-            # {'Ax_X': {'value': 0.0005 100000000011207, 'setpoint': 0.00043000000000059657},
-            #  'Ax_Y': {'value': -0.0011199999999998989, 'setpoint': 0.0}}
-
-
             axes = list(motors.keys())
-            # ['Ax_X', 'Ax_Y']
 
-            self.set_pos("Undefined")
+            self.set_pos_sel("Undefined")
             move_status = getattr(self.motors.motors, axes[0]).set(values[0])
 
             for axis_index in range(1, len(axes)):
-                curr_motor = getattr(self.motors.motors, axes[axis_index])      # curr_motor is an EpicsMotor signal
+                curr_motor = getattr(self.motors.motors, axes[axis_index])
                 move_status = move_status & curr_motor.set(values[axis_index])
 
-            move_status.add_callback(self.update_pos)
+            move_status.add_callback(self.sync_pos_sel)
             return move_status
 
             
     return DeviceWithLookup
+
+sltclass = make_device_with_lookup_table(prefix="XF:23ID1-OP{Slt:3", pos_sel_dev="LUT", num_rows=10, col_suffixes=["Ax:X", "Ax:Y"], precision=3)
+slt3WithLookup = sltclass(name = "slt3WithLookup")
 
