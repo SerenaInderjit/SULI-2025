@@ -193,6 +193,9 @@ cam_fs1_hdf5.configuration_attrs.extend(['roi1', 'roi2', 'roi3','roi4'])
 
 
 
+# XF:23ID-PPS{Sh:FE}Pos-Sts
+
+
 
 
 # Canting magnet readback value
@@ -227,8 +230,10 @@ class FMBHexapodMirror(Device):
 
 m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
 
+# RE(mvr(m1a.pit, 0.025))
 
-# Front End Slits
+
+# Front End Slits  FE:C23A-OP{Slt:12-Ax:X}size.VAL
 
 class acc_slit(PVPositionerPC):
     setpoint = Cpt(EpicsSignal, 'size.VAL')
@@ -239,8 +244,8 @@ class acc_slit_cent(PVPositionerPC):
     readback = Cpt(EpicsSignalRO, 't2.D')
 
 class FEAxis(Device):
-    gap = FCpt(acc_slit, '{prefix}-Ax:{self.axis}')
-    cent = FCpt(acc_slit_cent, '{prefix}-Ax:{self.axis}')
+    gap = FCpt(acc_slit, '{prefix}-Ax:{self.axis}}}')
+    cent = FCpt(acc_slit_cent, '{prefix}-Ax:{self.axis}}}')
 
     def __init__(self, *args, axis : str, **kwargs):
         self.axis = axis
@@ -325,7 +330,9 @@ class BPM(Device):
 
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm')
 
+es_diag1_y = EpicsMotor('XF:23ID1-ES{Diag:1-Ax:Y}Mtr', name='es_diag1_y', labels=['motors'])
 
+fluo_screen_y = EpicsMotor('XF:23IDA-BI:1{FS:1-Ax:X}Mtr', name='fluo_screen_y', labels=['motors'])
 # Turn fluo screen scan into image with ROIs
 def make_fluo_img():
     img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
