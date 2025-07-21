@@ -2,9 +2,8 @@ from bluesky.plan_stubs import null, mv
 
 import os, subprocess, inspect
 from rich import print as cprint
-from ophyd.sim import make_fake_device, SynAxis, FakeEpicsSignal
 
-from source_check import m1a
+from source_check_devices import m1a, epu1, epu2, FEslt, fs_diag1_x
 
 def colored(text, tint='white', attrs=[], end=None):
     '''
@@ -56,25 +55,24 @@ def whisper(text, end=None):
     colored(text, 'bold black', end=end)
 
 
-class WDYWTD():
-    '''What Do You Want To Do?
+class SourceCheck():
+    
 
-    An extremely simple textual user interface to the most commonly
-    performed chores at BMM.
 
-    '''
-    def wdywtd(self):
+    def source_check_manual(self):
         '''Prompt the user to do a thing.
         '''
 
-        actions = {'1': ('SourceCheck',         'perform source check'),
-                   '2': ('ChangeEdge',   'change edge'),
-                   '3': ('Spreadsheet',  'import spreadsheet'),
-                   '4': ('RunMacro',     'run macro'),
-                   '5': ('AlignSlot',    'align wheel slot'),
-                   '6': ('AlignGA',      'align glancing angle stage'),
-                   '7': ('XRFSpectrum',  'view XRF spectrum'),
-
+        actions = {'0': ('Step0',   'preparation'),
+                   '1': ('Step1',   'detuned source'),
+                   '2': ('Step2',   'ios source'),
+                   '3': ('Step3',   'csx source'),
+                   '4': ('Step4',   'source'),
+                   '5': ('Step5',   'check slits1'),
+                   '6': ('Step6',   'check m1a pos'),
+                   '7': ('Step7',   'check pink beam'),
+                   '8': ('Step8',   'check pink beam & slits'),
+                   '9': ('End',     'return to ops')
         }
         
         print('''
@@ -99,123 +97,213 @@ class WDYWTD():
         if choice in actions:
             thing = f'do_{actions[choice][0]}'
         return getattr(self, thing, lambda: bailout)()
-    def doSourceCheck(self):
-        
-
-        go_msg('You would like to perform a source check...\n')
-
-        # Step 0 - preperation
-        print("Make sure FE Shutter is closed...")
-        print("Record current M1a position as operating position...")
-        print("Record current FEslt position as operating position...")
-
-        # Step 1 - detuned source
-        print("Setting EPU1 to 100...")
-        print("Setting EPU2 to 100...")
-        print("Setting M1a to 'out' (using relative motion)...")
-
-
-        # Step 2 - ios source
-        print("Setting EPU1 to 85...")
-
-        # Step 3 - csx source
-        print("Setting EPU1 to 100...")
-        print("Setting EPU2 to 85...")
-
-        # Step 4 - source
-        print("Setting EPU1 to 83...")
-        print("Setting EPU2 to 83...")
-        print("Make sure EPU phases are set to 0...")
-
-        # Step 5 - check slits
-        print("Setting FEslt to normal operating position...")
-
-        # Step 6 - check M1a pos
-        print("Setting M1a to 'in' (using relative motion)...")
-
-        # Step 7 - check pink beam
-        print("Setting FS diag to Pink Beam position...")
-
-        # Step 8 - check pink beam and slits
-        print("Setting FEslt to normal operating position...")
-
-
-
-
-    def do_MoveDiag(self):
-        go_msg('You would like to move es_diag1...\n')
-        print("Where would you like to move it? (position name or 'm' for manual value)")
-        es_diagWithLookup.get_all_positions()
-        where = input()
-        print(f"You chose {where}")
-        y = float(es_diagWithLookup.motor.read()['es_diagWithLookup_motor']['value'])
-        match where:
-            case "m":
-                print("Enter Y value (number or 'c' for current value): ")
-                i = input()
-                match i:
-                    case "c":
-                        y = y
-                    case _:
-                        y = float(i)
-            case _:
-                try:
-                    y = es_diagWithLookup.lookup(where)
-                except ValueError:
-                    print(f"{where} is not one of the available options")
-                    return
-        print(f"Y: {y}")
-        print(f"CONFIRM: Move to {y} (y/n)")
-        confirmation = input()
-        match confirmation.lower():
-            case "y" | "yes":
-                print (f"Moving to {y}...")
-                print ("yield from mv(es_diagWithLookup, y)")
-            case "n" | "no":
-                print ("Movement canceled.")
-        
     
-    def do_AdjustSlit3(self):
-        go_msg('You would like to adjust the size of the slt3...\n')
-        print("Where would you like to position it? (2000, 50, 20, 10, or 'm' for manual coordinates)")
-        slt3WithLookup.get_all_sizes()
-        where = input()
-        where = where.lower()
-        print(f"You chose {where}")
-        x = float(slt3WithLookup.x.read()['slt3WithLookup_x']['value'])
-        y = float(slt3WithLookup.y.read()['slt3WithLookup_y']['value'])
-        match where:
-            case "2000" | "50" | "20" | "10":
-                x, y = slt3WithLookup.lookup(where)
-            case "m":
-                print("Enter X value (number or 'c' for current value): ")
-                i = input()
-                match i:
-                    case "c":
-                        x = x
-                    case _:
-                        x = float(i)
-                print(f"X: {x}")
-                print("Enter Y value (number or 'c' for current value): ")
-                i = input()
-                match i:
-                    case "c":
-                        y = y
-                    case _:
-                        y = float(i)
-                print(f"Y: {y}")
+    m1a_ops = {}
+    FEslt_ops = {}
+    FSdiag_ops = {}
+    epu1_ops = {}
+    epu2_ops = {}
+
+    def abort(self):
+        print("Abort or Continue Step (default abort)\n1. Abort\n2. Continue")
+        i = input()
+        match i:
+            case "2":
+                return False
             case _:
-                print(f"{where} is not one of the available options")
-                return
-        
-        print(f"CONFIRM: Move to ({x}, {y}) (y/n)")
-        confirmation = input()
-        match confirmation.lower():
-            case "y" | "yes":
-                print (f"Moving to ({x}, {y})...")
-                print ("yield from mv(slt3WithLookup, (x, y))")
-            case "n" | "no":
-                print ("Movement canceled.")
+                return True
             
 
+    def input_default_n(self, prompt, plan, signal, target):
+        print(prompt)
+        i = input()
+        match i:
+            case "y":
+                yield from plan(signal, target)
+            case _:
+                if (self.abort()):
+                    return False
+                else: 
+                    return True 
             
+
+    def input_default_y(self, prompt):
+        print(prompt)
+        i = input()
+        match i:
+            case "n":
+                return False
+            case _:
+                return True
+
+
+    def doPrep(self):
+
+        print("\nSource check preparation\n")
+
+        # Make sure FE shutter is closed
+        print("Close FE shutter. Confirm ([y]/n)")
+        if (self.input_default_n()):
+            "yield from (TODO: build shutter device)"
+        else:
+            if (self.abort()):
+                return
+            else:
+                self.doPrep()
+        
+
+
+        # Record starting positions using setpoints
+        m1a_ops = {"x" : m1a.x.setpoint.get(), 
+                   "y" : m1a.y.setpoint.get(), 
+                   "z" :  m1a.z.setpoint.get(), 
+                   "pit" : m1a.pit.setpoint.get(), 
+                   "yaw" : m1a.yaw.setpoint.get(), 
+                   "roll" : m1a.rol.setpoint.get()}
+        
+        FEslt_ops = {"x_gap" : FEslt.x.gap.setpoint.get(), 
+                     "y_gap" : FEslt.y.gap.setpoint.get(), 
+                     "x_cent" : FEslt.x.cent.setpoint.get(), 
+                     "y_cent" : FEslt.y.cent.setpoint.get()}
+        
+        FSdiag_ops = {"x" : fs_diag1_x.setpoint.get()}
+
+        epu1_ops = {"gap" : epu1.gap.setpoint.get(), "phase" : epu1.phase.setpoint.get()}
+        epu2_ops = {"gap" : epu2.gap.setpoint.get(), "phase" : epu2.phase.setpoint.get()}
+
+        print(f"Recording current M1a position as {m1a_ops}...")
+        print(f"Recording current FEslt position as operating position as {FEslt_ops}...")
+        print(f"Recording current FSdiag position as {FSdiag_ops}")
+        print(f"Recording current EPU1 position as {epu1_ops}")
+        print(f"Recording current EPU1 position as {epu2_ops}")
+
+        # Make sure EPU phases are 0
+        if (epu1.phase.setpoint.get() != 0):
+            print("Set EPU1 phase to 0. Confirm (y/n)")     # Check risk for default
+    
+        if (epu2.phase.setpoint.get() != 0):
+            print("Set EPU2 phase to 0. Confirm (y/n)")     # Check risk for default
+        
+        self.source_check_manual()
+
+
+
+    def doStep1(self):
+
+        print("\nStep 1 - detuned source\n")
+
+        print("Set EPU1 Gap to 100. Confirm ([y]/n)")
+
+        print("Set EPU2 Gap to 100. Confirm ([y]/n)")
+
+        print ("Open FE slits. Confirm (y/[n])")
+
+        print("Move m1a to 'out' position. Confirm (y/n)")     # Check risk for default
+
+        print("Open FE shutter. Confirm (y/[n])")
+
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doStep2(self):
+
+        print("\nStep 2 - ios source\n")
+
+        print("Set EPU1 Gap to 82. Confirm ([y]/n)")
+
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+
+    def doStep3(self):
+
+        print("\nStep 3 - csx source\n")
+
+        print("Set EPU1 Gap to 100. Confirm ([y]/n)")
+
+        print("Set EPU2 Gap to 85. Confirm ([y]/n)")
+        
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+
+    def doStep4(self):
+
+        print("\nStep 4 - source\n")
+
+        print("Set EPU1 Gap to 82. Confirm ([y]/n)")
+        
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doStep5(self):
+        
+        print("\nStep 5 - check slits1n]")
+
+        print("Set Y Gap of FE slits to {operating pos}. Confirm (y/[n])")
+
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doStep6(self):
+
+        print("\nStep 6 - check m1a pos\n")
+
+        print("Close FE shutter. Confirm ([y]/n)")
+
+        print("Move m1a to {normal operating pos}. Confirm (y/n)")     # Check risk for default
+
+        print("Open FE slits. Confirm (y/[n])")
+
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doStep7(self):
+
+        print("\nStep 7 - check pink beam\n")
+        
+        print("Close FE shutter. Confirm ([y]/n)")
+
+        print("Set FS diag to Pink Beam position. Confirm (y/n)")     # Check risk for default
+        
+        print("Open FE shutter. Confirm (y/[n])")
+        
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        print("Close FE shutter. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doStep8(self):
+
+        print("\nStep 8 - check pink beam & slits\n")
+
+        print("Setting FEslt to {normal operating pos}. Confirm (y/[n])")
+
+        print("Take photo of FSdiag. Confirm ([y]/n)")
+
+        self.source_check_manual()
+
+    def doReturnToOPS(self):
+
+        print("\nEnd - return to operating positions\n")
+
+        print("Close FE shutters. Confirm ([y]/n)")
+
+        print("Set FS diag to 'out'. Confirm ([y]/n)")
+
+        print("Open FE shutter. Confirm (y/[n])")
+
+
+
+
+
+
+
+
