@@ -3,7 +3,7 @@ from bluesky.plan_stubs import null, mv
 import os, subprocess, inspect
 from rich import print as cprint
 
-from source_check_devices import m1a, epu1, epu2, FEslt, fs_diag1_x
+from source_check_devices import m1a, epu1, epu2, FEslt
 
 def colored(text, tint='white', attrs=[], end=None):
     '''
@@ -104,52 +104,52 @@ class SourceCheck():
     epu1_ops = {}
     epu2_ops = {}
 
-    def abort(self):
-        print("Abort or Continue Step (default abort)\n1. Abort\n2. Continue")
-        i = input()
-        match i:
-            case "2":
-                return False
-            case _:
-                return True
-            
+    def pause(self):
+        print("\nStep paused\n")
+        print("1. Abort source check" \
+            "\n2. Continue step (default)" \
+            "\n3. Restart step" \
+            "\n4. Return to source check menu ")
+        return input()
+        
 
-    def input_default_n(self, prompt, plan, signal, target):
+    def input_default_n(self, step, prompt, plan, signal, target):
         print(prompt)
         i = input()
-        match i:
-            case "y":
-                yield from plan(signal, target)
-            case _:
-                if (self.abort()):
-                    return False
-                else: 
-                    return True 
+        if i == "y":
+            print(f"    yield from {plan}({signal}, {target})")
+            return ()
+        else:
+            pause_choice = self.pause()
+            match pause_choice:
+                case "1":
+                    print("Aborting...")
+                    return lambda:None
+                case "2":
+                    print("Continuing...")
+                    return 
+                case "3":
+                    print("Restarting step...")
+                    return step
+                case "4": 
+                    print("Returning to source check menu...")
+                    return self.source_check_manual
             
 
-    def input_default_y(self, prompt):
-        print(prompt)
-        i = input()
-        match i:
-            case "n":
-                return False
-            case _:
-                return True
 
+    def do_Prep(self):
 
-    def doPrep(self):
-
-        print("\nSource check preparation\n")
+        print("\nSource check preparation")
+        print("--------------------------\n")
 
         # Make sure FE shutter is closed
-        print("Close FE shutter. Confirm ([y]/n)")
-        if (self.input_default_n()):
-            "yield from (TODO: build shutter device)"
-        else:
-            if (self.abort()):
-                return
-            else:
-                self.doPrep()
+        a = self.input_default_n(self.do_Prep, 
+                                 "Close FE shutter? ([y]/n)", 
+                                 "mv", "FEslt.shutter", 'close')
+        if callable(a):
+            return a()
+
+        print("\n**Rest of actions for preparation would go here**\n")
         
 
 
