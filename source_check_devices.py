@@ -1,18 +1,15 @@
+
 from ophyd import AreaDetector, SingleTrigger, StatsPlugin, ROIPlugin, TransformPlugin, OverlayPlugin, Signal
-from ophyd.areadetector.plugins import HDF5Plugin_V22
-from ophyd.areadetector.filestore_mixins import FileStoreHDF5IterativeWrite
 from pathlib import PurePath
-
-
+from bluesky.plan_stubs import mvr, mv
+from bluesky.plans import count
 import logging
 from typing import Union, Optional
 from functools import reduce
-
 import networkx as nx
 from ophyd import (EpicsScaler, EpicsSignal, EpicsMotor, EpicsSignalRO, Device, BlueskyInterface,
                    SingleTrigger, HDF5Plugin, ImagePlugin, StatsPlugin,
                    ROIPlugin, TransformPlugin, OverlayPlugin, ProsilicaDetector, TIFFPlugin, Signal, Staged, CamBase)
-
 from ophyd.areadetector.cam import AreaDetectorCam, ADBase
 from ophyd.areadetector.detectors import DetectorBase
 from ophyd.areadetector.filestore_mixins import FileStoreHDF5IterativeWrite, FileStoreTIFFIterativeWrite, resource_factory
@@ -20,19 +17,21 @@ from ophyd.areadetector import ADComponent, EpicsSignalWithRBV
 from ophyd.areadetector.plugins import PluginBase, ProcessPlugin, HDF5Plugin_V22, TIFFPlugin_V22, CircularBuffPlugin_V34, CircularBuffPlugin, PvaPlugin
 from ophyd import Component as Cpt, DeviceStatus
 from ophyd.device import FormattedComponent as FCpt
-from ophyd import AreaDetector
 from ophyd.status import Status, SubscriptionStatus
+from ophyd.pv_positioner import PVPositioner, PVPositionerPC
 from pathlib import PurePath
 import time as ttime
 import itertools
-
 from ophyd.sim import NullStatus
-
-
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import datetime
+from motor_construction import make_device_with_lookup_table
+_time_fmtstr = '%Y-%m-%d %H:%M:%S'
 
+
+# Fluo Screen 1 Camera Classes
 def update_describe_typing(dic, obj):
     """
     Function for updating dictionary result of `describe` to include better typing.
@@ -141,7 +140,6 @@ class HDF5PluginWithFileStorePlain(HDF5Plugin_V22, FileStoreHDF5IterativeWrite):
         self.time_stamp.put(datum_id)
         return ret
 
-
 class StandardCam(SingleTrigger, AreaDetector):#TODO is there something more standard for prosilica? seems only used on prosilica. this does stats, but no image saving (unsure if easy to configure or not and enable/disable)
     stats1 = Cpt(StatsPlugin, 'Stats1:')
     stats2 = Cpt(StatsPlugin, 'Stats2:')
@@ -156,69 +154,268 @@ class StandardCam(SingleTrigger, AreaDetector):#TODO is there something more sta
     trans1 = Cpt(TransformPlugin, 'Trans1:')
     over1 = Cpt(OverlayPlugin, 'Over1:') ##for crosshairs in tiff
 
-
 class StandardProsilicaWithHDF5(StandardCam):
     hdf5 = Cpt(HDF5PluginWithFileStorePlain,
               suffix='HDF1:',
               write_path_template='/nsls2/data/csx/legacy/prosilica_data/hdf5/%Y/%m/%d',
               root='/nsls2/data/csx/legacy')
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hdf5.kind = "normal"
 
+def add_cam_rois(cam):
+    for k in (f'stats{j}' for j in range(1, 6)):
+        cam.read_attrs.append(k)
+        getattr(cam, k).read_attrs = ['total']
+        getattr(cam, k).total.kind = 'hinted'
 
 
+    roi_params = ['.min_xyz', '.min_xyz.min_y', '.min_xyz.min_x',
+                '.size', '.size.y', '.size.x', '.name_']
 
-# HDF5 Camera
-cam_fs1_hdf5 = StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}', name = 'cam_fs1_hdf5')
-# Test wit RE(count([cam_fs1_hdf5]))
+    configuration_attrs_list = [] 
 
+    configuration_attrs_list.extend(['roi' + str(i) + string for i in range(1,5) for string in roi_params])
+    for attr in configuration_attrs_list:
+        getattr(cam, attr).kind='config'
 
-for k in (f'stats{j}' for j in range(1, 6)):
-    cam_fs1_hdf5.read_attrs.append(k)
-    getattr(cam_fs1_hdf5, k).read_attrs = ['total']
-    getattr(cam_fs1_hdf5, k).total.kind = 'hinted'
+    cam.configuration_attrs.extend(['roi1', 'roi2', 'roi3','roi4'])
 
-
-roi_params = ['.min_xyz', '.min_xyz.min_y', '.min_xyz.min_x',
-              '.size', '.size.y', '.size.x', '.name_']
-
-configuration_attrs_list = [] 
-
-configuration_attrs_list.extend(['roi' + str(i) + string for i in range(1,5) for string in roi_params])
-for attr in configuration_attrs_list:
-    getattr(cam_fs1_hdf5, attr).kind='config'
-
-cam_fs1_hdf5.configuration_attrs.extend(['roi1', 'roi2', 'roi3','roi4'])
+    return cam
 
 
+# Front End Shutter Classes
+class EPSTwoStateDevice(Device):
+    # @tcaswell, the names don't need to be fixed. These commands run
+    # when the record is processed, you could as easily poke .PROC
+    state1_cmd = FCpt(EpicsSignal, '{self.prefix}Cmd:{self._state1_nm}-Cmd',
+                        string=True)
+    state2_cmd = FCpt(EpicsSignal, '{self.prefix}Cmd:{self._state2_nm}-Cmd',
+                        string=True)
 
-# XF:23ID-PPS{Sh:FE}Pos-Sts
+    status = Cpt(EpicsSignalRO, 'Pos-Sts', string=True)
+    fail_to_state2 = FCpt(EpicsSignalRO,
+                            '{self.prefix}Sts:Fail{self._state2_nm}-Sts',
+                            string=True)
+    fail_to_state1 = FCpt(EpicsSignalRO,
+                            '{self.prefix}Sts:Fail{self._state1_nm}-Sts',
+                            string=True)
+
+    def set(self, val):
+        if self._set_st is not None:
+            raise RuntimeError('trying to set while a set is in progress')
+
+        cmd_map = {self.state1_str: self.state1_cmd,
+                   self.state2_str: self.state2_cmd}
+        target_map = {self.state1_str: self.state1_val,
+                      self.state2_str: self.state2_val}
+
+        cmd_sig = cmd_map[val]
+        target_val = target_map[val]
+
+        st = self._set_st = DeviceStatus(self)
+        enums = self.status.enum_strs
+
+        def shutter_cb(value, timestamp, **kwargs):
+            try:
+                value = enums[int(value)]
+            except (ValueError, TypeError):
+                # we are here because value is a str not int
+                # just move on
+                ...
+            if value == target_val:
+                self.status.clear_sub(shutter_cb)
+                cmd_sig.clear_sub(cmd_retry_cb)
+                # This was a race condition, fixed.
+                # First clear self._set_st to allow future moves to start,
+                # and _then_ mark the current move as done.
+                self._set_st = None
+                st.set_finished()
+
+        cmd_enums = cmd_sig.enum_strs
+        count = 0
+        MAX_RETRIES = 5
+        WAIT_FOR_RETRY = 0.5  # seconds
+        def cmd_retry_cb(value, timestamp, **kwargs):
+            nonlocal count
+            try:
+                value = cmd_enums[int(value)]
+            except (ValueError, TypeError):
+                # we are here because value is a str not int
+                # just move on
+                ...
+            count += 1
+            if count > MAX_RETRIES:
+                cmd_sig.clear_sub(cmd_retry_cb)
+                err = Exception(f"Retried {MAX_RETRIES} times and did not finish.")
+                st.set_exception(err)
+            if value == 'None':
+                ttime.sleep(WAIT_FOR_RETRY)
+                if not st.done:
+                    # Retry setting the command to 1.
+                    cmd_sig.set(1)
+                    ts = datetime.datetime.fromtimestamp(timestamp).strftime(_time_fmtstr)
+                    print('** ({}) Had to reactuate shutter while {}ing v2'.format(ts, val))
+
+        cmd_sig.subscribe(cmd_retry_cb, run=False)
+        self.status.subscribe(shutter_cb)
+        cmd_sig.set(1)
+
+        return st
+
+    def __init__(self, *args, state1='Open', state2='Closed',
+                 cmd_str1='Open', cmd_str2='Close',
+                 nm_str1='Opn', nm_str2='Cls', **kwargs):
+
+        self._state1_nm = nm_str1
+        self._state2_nm = nm_str2
+
+        super().__init__(*args, **kwargs)
+
+        self._set_st = None
+        self.read_attrs = ['status']
+
+        self.state1_str = cmd_str1
+        self.state2_str = cmd_str2
+        self.state1_val = state1
+        self.state2_val = state2
+
+class TwoButtonShutter(Device):
+    # TODO: this needs to be fixed in EPICS as these names make no sense
+    # the value coming out of the PV does not match what is shown in CSS
+    RETRY_PERIOD = 0.5
+    MAX_ATTEMPTS = 10
+    open_cmd = Cpt(EpicsSignal, 'Cmd:Opn-Cmd', string=True)
+    open_val = 'Open'
+
+    close_cmd = Cpt(EpicsSignal, 'Cmd:Cls-Cmd', string=True)
+    close_val = 'Not Open'
+
+    status = Cpt(EpicsSignalRO, 'Pos-Sts', string=True)
+    fail_to_close = Cpt(EpicsSignalRO, 'Sts:FailCls-Sts', string=True)
+    fail_to_open = Cpt(EpicsSignalRO, 'Sts:FailOpn-Sts', string=True)
+    enabled_status = Cpt(EpicsSignalRO, 'Enbl-Sts', string=True)
+
+    # user facing commands
+    open_str = 'Open'
+    close_str = 'Close'
+
+    def set(self, val):
+        if self._set_st is not None:
+            raise RuntimeError(f'trying to set {self.name}'
+                               ' while a set is in progress')
+
+        cmd_map = {self.open_str: self.open_cmd,
+                   self.close_str: self.close_cmd}
+        target_map = {self.open_str: self.open_val,
+                      self.close_str: self.close_val}
+
+        cmd_sig = cmd_map[val]
+        target_val = target_map[val]
+
+        st = DeviceStatus(self)
+        if self.status.get() == target_val:
+            st._finished()
+            return st
+
+        self._set_st = st
+        print(self.name, val, id(st))
+        enums = self.status.enum_strs
+
+        def shutter_cb(value, timestamp, **kwargs):
+            try:
+                value = enums[int(value)]
+            except (ValueError, TypeError):
+                # we are here because value is a str not int
+                # just move on
+                ...
+            if value == target_val:
+                self._set_st = None
+                self.status.clear_sub(shutter_cb)
+                st._finished()
+
+        cmd_enums = cmd_sig.enum_strs
+        count = 0
+
+        def cmd_retry_cb(value, timestamp, **kwargs):
+            nonlocal count
+            try:
+                value = cmd_enums[int(value)]
+            except (ValueError, TypeError):
+                # we are here because value is a str not int
+                # just move on
+                ...
+            count += 1
+            if count > self.MAX_ATTEMPTS:
+                cmd_sig.clear_sub(cmd_retry_cb)
+                self._set_st = None
+                self.status.clear_sub(shutter_cb)
+                st._finished(success=False)
+            if value == 'None':
+                if not st.done:
+                    time.sleep(self.RETRY_PERIOD)
+                    cmd_sig.set(1)
+
+                    ts = datetime.datetime.fromtimestamp(timestamp) \
+                        .strftime(_time_fmtstr)
+                    if count > 2:
+                        msg = '** ({}) Had to reactuate shutter while {}ing'
+                        print(msg.format(ts, val if val != 'Close'
+                                         else val[:-1]))
+                else:
+                    cmd_sig.clear_sub(cmd_retry_cb)
+
+        cmd_sig.subscribe(cmd_retry_cb, run=False)
+        self.status.subscribe(shutter_cb)
+        cmd_sig.set(1)
+
+        return st
+
+    def stop(self, *, success=False):
+        import time
+        prev_st = self._set_st
+        if prev_st is not None:
+            while not prev_st.done:
+                time.sleep(.1)
+        self._was_open = (self.open_val == self.status.get())
+        st = self.set('Close')
+        while not st.done:
+            time.sleep(.5)
+
+    def resume(self):
+        import time
+        prev_st = self._set_st
+        if prev_st is not None:
+            while not prev_st.done:
+                time.sleep(.1)
+        if self._was_open:
+            st = self.set('Open')
+            while not st.done:
+                time.sleep(.5)
+
+    def unstage(self):
+        self._was_open = False
+        return super().unstage()
+
+    def __init__(self, *args, **kwargs):
+        self._was_open = False
+        super().__init__(*args, **kwargs)
+        self._set_st = None
+        self.read_attrs = ['status']
 
 
-
-
-# Canting magnet readback value
-canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
-
-# Phaser magnet motor
-phaser = EpicsMotor('SR:C23-MG:G1{MG:Phaser-Ax:Y}Mtr',name='phaser')
-
-
-
-# M1A mirror (csx1/startup/optics.py)
+# M1A mirror Classes (csx1/startup/optics.py)
 
 class FMBHexapodMirrorAxis(PVPositioner):
     readback = Cpt(EpicsSignalRO, 'Mtr_MON')
     setpoint = Cpt(EpicsSignal, 'Mtr_POS_SP')
-    actuate = FmtCpt(EpicsSignal, '{self.parent.prefix}}}MOVE_CMD.PROC')
+    actuate = FCpt(EpicsSignal, '{self.parent.prefix}}}MOVE_CMD.PROC')
     actual_value = 1
-    stop_signal = FmtCpt(EpicsSignal, '{self.parent.prefix}}}STOP_CMD.PROC')
+    stop_signal = FCpt(EpicsSignal, '{self.parent.prefix}}}STOP_CMD.PROC')
     stop_value = 1
-    done = FmtCpt(EpicsSignalRO, '{self.parent.prefix}}}BUSY_STS')
+    done = FCpt(EpicsSignalRO, '{self.parent.prefix}}}BUSY_STS')
     done_value = 0
-
-
 class FMBHexapodMirror(Device):
     z = Cpt(FMBHexapodMirrorAxis, '-Ax:Z}')
     y = Cpt(FMBHexapodMirrorAxis, '-Ax:Y}')
@@ -227,13 +424,20 @@ class FMBHexapodMirror(Device):
     yaw = Cpt(FMBHexapodMirrorAxis, '-Ax:Yaw}')
     rol = Cpt(FMBHexapodMirrorAxis, '-Ax:Rol}')
 
+    def mv_out(self):
+        if self.y == -8.410:
+            print("{self.name} is already in 'out' position")
+        else:
+            yield from mvr(self.y.setpoint, -6)
 
-m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
+    def mv_in(self):
+        if self.y == -2.410:
+            print("{self.name} is already in 'in' position")
+        else:
+            yield from mvr(self.y.setpoint, 6)
 
-# RE(mvr(m1a.pit, 0.025))
 
-
-# Front End Slits  FE:C23A-OP{Slt:12-Ax:X}size.VAL
+# Front End Slits Classes
 
 class acc_slit(PVPositionerPC):
     setpoint = Cpt(EpicsSignal, 'size.VAL')
@@ -255,11 +459,11 @@ class FrontEndSlit(Device):
     x = Cpt(FEAxis, '', axis = 'X')
     y = Cpt(FEAxis, '', axis = 'Y')
 
-FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
+    def mv_open(self):
+        yield from mv(self.y.gap, 4.8)
 
-# EPUs 
 
-# (csx1/devices/epu.py)
+# EPUs Classes (csx1/devices/epu.py)
 
 class EPUMotor(PVPositionerPC):
     readback = Cpt(EpicsSignalRO, 'Pos-I')
@@ -304,12 +508,8 @@ class EPU(Device):
         self._epu_prefix = epu_prefix
         super().__init__(*args, **kwargs)
 
-# (csx1/startup/accelerator.py)
-epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
-epu2 = EPU('XF:23ID-ID{EPU:2', epu_prefix='SR:C23-ID:G1A{EPU:2', ai_prefix='SR:C31-{AI}23-2', name='epu2', labels=['source'])
 
-
-# BPM
+# BPM Classes
 
 class BPM_signal(Device):
     setpoint = Cpt(EpicsSignalRO, '-SP')
@@ -327,17 +527,41 @@ class BPM(Device):
     x = Cpt(BPMAxis, '', axis = 'X')
     y = Cpt(BPMAxis, '', axis = 'Y')
 
+# Fs_diag1_x Classes
 
+class single_motor_device(Device):
+    x = Cpt(EpicsMotor,'-Ax:X}Mtr', name='x', labels=['motors'])
+
+
+
+
+
+#       DEVICES
+#------------------------
+
+
+# Front End Shutter
+FE_shutter = TwoButtonShutter('XF:23ID-PPS{Sh:FE}', name='FE_shutter')
+
+
+# Front End Slits
+FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
+
+
+# Fluo Screen 1 motor
+fs_diag1_x = make_device_with_lookup_table(single_motor_device, pos_sel_dev='Ax:X', num_rows=10, precision=2)('XF:23IDA-BI:1{FS:1', name = 'fs_diag1_x')
+
+# Beam Position Monitor
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm')
 
-es_diag1_y = EpicsMotor('XF:23ID1-ES{Diag:1-Ax:Y}Mtr', name='es_diag1_y', labels=['motors'])
 
-fluo_screen_y = EpicsMotor('XF:23IDA-BI:1{FS:1-Ax:X}Mtr', name='fluo_screen_y', labels=['motors'])
-# Turn fluo screen scan into image with ROIs
-def make_fluo_img():
-    img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
+# Fluo Screen 1 HDF5 Camera (copied from csx1/startup/detectors.py)
+cam_fs1_hdf5 = add_cam_rois(StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}', name = 'cam_fs1_hdf5'))
+
+
+# Turn the np array from a fluo screen scan into image with ROIs
+def make_fluo_img(img):
     fig, ax = plt.subplots()
-
     imgplot = ax.imshow(img)
 
     rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
@@ -353,3 +577,25 @@ def make_fluo_img():
 
     imgplot.set_cmap('jet')
     plt.show()
+
+
+# EPUs (copied from csx1/startup/accelerator.py)
+# epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
+# epu2 = EPU('XF:23ID-ID{EPU:2', epu_prefix='SR:C23-ID:G1A{EPU:2', ai_prefix='SR:C31-{AI}23-2', name='epu2', labels=['source'])
+
+
+# M1A Mirror (copied from csx1/startup/optics.py)
+# m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
+
+# Canting magnet readback value
+canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
+
+# Phaser magnet motor
+phaser = EpicsMotor('SR:C23-MG:G1{MG:Phaser-Ax:Y}Mtr',name='phaser')
+
+
+sd.baseline.extend([FEslt.x.gap.readback, 
+          FEslt.x.cent.readback, 
+          FEslt.y.gap.readback, 
+          FEslt.y.cent.readback,
+          fs_diag1_x])
