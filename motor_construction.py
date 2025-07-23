@@ -1,5 +1,6 @@
+import ophyd
 from ophyd import EpicsMotor, sim, Device, Kind
-from ophyd import Component as Cpt, FormattedComponent as FCpt
+from ophyd import Component as Cpt, FormattedComponent as FCpt, DynamicDeviceComponent
 from ophyd.sim import make_fake_device, SynAxis, FakeEpicsSignal
 from ophyd.signal import EpicsSignal
 from ophyd.status import MoveStatus, wait
@@ -23,13 +24,12 @@ from ophyd.utils import (
 # Find out all 16 extensions and add them
 pos_sel_extensions = ["", "ONST", "TWST", "THST", "FRST", "FVST", "SXST", "SVST", "EIST", "NIST" ,"TEST"]
 
-
-def make_lookup_row(*args, col_suffixes: list[str], col_names : list[str], prefix : str, pos_sel_dev : str, row_number : int, **kwargs):
+def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names : list[str], row_number : int, **kwargs):
 
     defn = OrderedDict()
 
     for i in range(len(col_suffixes)):
-        pv = (prefix + "-" + col_suffixes[i] + "}Val:" + str(row_number) + "-SP")
+        pv = ("-" + col_suffixes[i].replace("-", "").replace("}Mtr", "") + "}Val:" + str(row_number) + "-SP")
 
         
         defn[col_names[i]] = (EpicsSignal, pv, {})
@@ -39,7 +39,7 @@ def make_lookup_row(*args, col_suffixes: list[str], col_names : list[str], prefi
 
        
         values = DynamicDeviceComponent(defn)
-        key = Cpt(EpicsSignal, ((prefix + "-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[row_number])))
+        key = Cpt(EpicsSignal, (("-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[row_number])))
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)       
@@ -55,75 +55,59 @@ def make_lookup_row(*args, col_suffixes: list[str], col_names : list[str], prefi
 
     return LookupRow
 
-
-def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], prefix : str, **kwargs):
+def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], **kwargs):
     defn = OrderedDict()
     
     for i in range(1, num_rows + 1):
         
-        LookupRow = make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, prefix=prefix, pos_sel_dev = pos_sel_dev, row_number=i)
+        LookupRow = make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, pos_sel_dev = pos_sel_dev, row_number=i)
         defn[f"row{i}"] = (LookupRow, "", {"name" : f"row{i}"})
 
-    return defn
+    return DynamicDeviceComponent(defn)
 
 
-def get_motor_components(*args, prefix : str, col_suffixes : list[str], col_names : list[str], **kwargs):
-    defn = OrderedDict()
+class SlitsXY(Device):
+    x = Cpt(EpicsMotor, '-Ax:X}Mtr', name='x')
+    y = Cpt(EpicsMotor, '-Ax:Y}Mtr', name='y')
 
-    for i in range(len(col_suffixes)):
-        
-        defn[col_names[i]] = Cpt(EpicsMotor, (prefix + "-" + col_suffixes[i] + "}Mtr"), name = col_names[i])
+    def print_name():
+        print ("SlitsXY")
 
-    return defn
 
-def get_motor_signals(*args, prefix : str, col_suffixes : list[str], col_names : list[str], **kwargs):
-    defn = OrderedDict()
+my_dev = SlitsXY('XF:23ID1-OP{slt:3', name='my_dev', labels=['optics'])
 
-    for i in range(len(col_suffixes)):
-        
-        defn[col_names[i]] = EpicsMotor((prefix + "-" + col_suffixes[i] + "}Mtr"), name = col_names[i])
 
-    return defn
+def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int, precision : int = 20, *args, **kwargs):
 
-def make_lookup_table(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], prefix : str, **kwargs):
-    defn = OrderedDict()
+    motor_components = OrderedDict()
+    col_names = []
+    col_suffixes = []
+    for key in cls.__dict__['component_names']:
+        signal = cls.__dict__[key]
+        if (cls.__dict__[key].cls == EpicsMotor):
+            motor_components[key] = cls.__dict__[key]
+            col_names.append(key)
+            col_suffixes.append(signal.suffix)
+
     
-    
-    for i in range(1, num_rows + 1):
-        
-        LookupRow = make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, prefix=prefix, pos_sel_dev = pos_sel_dev, row_number=i)
-        defn[f"row{i}"] = (LookupRow, "", {"name" : f"row{i}"})
-
-    return OrderedDict(pos_lookup = DynamicDeviceComponent(defn))
-
-
-
-
-def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int, col_suffixes: list[str],  col_names : list[str], precision : int = 20, *args, **kwargs):
-
-
-    pos_sel = OrderedDict(pos_sel = Cpt(EpicsSignal, prefix + "-" + pos_sel_dev + "}Pos-Sel", kind = 'hinted', string=True))
-
-    motor_components = get_motor_components(prefix=prefix, col_suffixes=col_suffixes, col_names = col_names)
-    motor_signals = get_motor_signals(prefix=prefix, col_suffixes=col_suffixes, col_names = col_names)
-
-
-    pos_lookup = make_lookup_table(prefix=prefix, pos_sel_dev=pos_sel_dev, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names)
+    pos_lookup = OrderedDict(pos_lookup = make_lookup_table(pos_sel_dev=pos_sel_dev, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
+    pos_sel = OrderedDict(pos_sel = Cpt(EpicsSignal, "-" + pos_sel_dev + "}Pos-Sel", kind = 'hinted', string=True))
 
     def __init__(self, *args, **kwargs):
         super(type(self), self).__init__(*args, **kwargs)
         self.precision = precision
 
-    def get_motors(self):
+
+    def _get_motors(self):
         motors = {}
-        for key in motor_signals:
+        for key in motor_components:
             motor = {}
-            motor["value"] = motor_signals[key].user_readback.get()
-            motor["setpoint"] = motor_signals[key].user_setpoint.get()
+            motor["value"] = getattr(self, key).user_readback.get()
+            motor["setpoint"] = getattr(self, key).user_setpoint.get()
             motors[key] = motor
         return motors
     
-    def get_table(self):
+    def _get_table(self):
         table = {}
         for i in range(1, num_rows + 1):
             key = f"row{i}"
@@ -133,16 +117,16 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
         return table
     
     def get_all_positions(self):
-        lookup = self.get_table()
+        lookup = self._get_table()
         length = len(lookup)
-        print(f"\n  {length} possible positions:")
+        print(f"\n  {length} Possible Positions:")
         print("----------------------------------")
         for pos_name in lookup:
             if lookup[pos_name] != "Undefined":
                 print(f'    {pos_name:_<15} : {tuple(lookup[pos_name].values())}')
 
     def lookup(self, name : str):
-        lookup = self.get_table()
+        lookup = self._get_table()
 
         new_name = (name)
 
@@ -152,14 +136,12 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
         raise ValueError (f"Could not find {name} in lookup table")
     
     def lookup_by_values(self, pos : tuple[float]):
-        lookup = self.get_table()
+        lookup = self._get_table()
         matched_entry = ""
-
         for lookup_index in range(len(lookup)):
             match = True
             lookup_entry_key = list(lookup.keys())[lookup_index]
             lookup_entry_values = list(lookup[lookup_entry_key].values())
-
             for axis_index in range(len(pos)):
                 if round(pos[axis_index], self.precision) != round(lookup_entry_values[axis_index], self.precision):
                     match = False
@@ -174,7 +156,7 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
             return matched_entry    
     
     def where_am_i(self):
-        motors = self.get_motors()
+        motors = self._get_motors()
         pos_sel_val = self.pos_sel.get()
 
         for axis in motors:
@@ -189,7 +171,6 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
         except ValueError:
             matched_entry = ""
 
-        print("matched_entry", matched_entry)
         
         if (matched_entry == "") or (pos_sel_val != matched_entry):
             print("\nYour motor values and/or Pos-Sel do not match one of the preset positions")
@@ -205,7 +186,7 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
     
     def sync_pos_sel(self, status = None):
         self.set_pos_sel("Undefined")
-        motors = self.get_motors()
+        motors = self._get_motors()
         motor_values = tuple([motors[axis]["setpoint"] for axis in motors])
         self.set_pos_sel(motor_values)
 
@@ -216,14 +197,15 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
         else: values = list(size)
         
 
-        motors = self.get_motors()
+        motors = self._get_motors()
         axes = list(motors.keys())
 
         self.set_pos_sel("Undefined")
-        move_status = getattr(self.motors, axes[0]).set(values[0])
+        init_motor = getattr(self, axes[0])
+        move_status = init_motor.set(values[0])
 
         for axis_index in range(1, len(axes)):
-            curr_motor = getattr(self.motors, axes[axis_index])
+            curr_motor = getattr(self, axes[axis_index])
             move_status = move_status & curr_motor.set(values[axis_index])
 
         move_status.add_callback(self.sync_pos_sel)
@@ -238,8 +220,8 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
             _default_read_attrs=read_attrs_names,
             _default_configuration_attrs=[],
             __init__ = __init__,
-            get_motors = get_motors,
-            get_table = get_table,
+            _get_motors = _get_motors,
+            _get_table = _get_table,
             get_all_positions = get_all_positions,
             lookup = lookup,
             lookup_by_values = lookup_by_values,
@@ -249,7 +231,7 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
             set = set
         )
 
-    clsdict = clsdict | motor_components | pos_lookup | pos_sel
+    clsdict = clsdict | motor_components | pos_sel | pos_lookup
     
     DeviceWithLookup = type("DeviceWithLookup", (Device, ), clsdict, **{})
 
@@ -257,8 +239,8 @@ def make_device_with_lookup_table(prefix : str, pos_sel_dev: str, num_rows: int,
 
     
 
-sltclass = make_device_with_lookup_table(prefix="XF:23ID1-OP{Slt:3", pos_sel_dev="LUT", num_rows=10, col_suffixes=["Ax:X","Ax:Y"], col_names = ["x", "y"], precision=3)
+sltclass = make_device_with_lookup_table(SlitsXY, pos_sel_dev="LUT", num_rows=10, precision=3)
 
-slt3WithLookup = sltclass(name = "slt3WithLookup")
+slt3WithLookup = sltclass('XF:23ID1-OP{Slt:3', name = "slt3WithLookup")
 
 
