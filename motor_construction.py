@@ -1,30 +1,35 @@
 import ophyd
 from ophyd import EpicsMotor, sim, Device, Kind
 from ophyd import Component as Cpt, FormattedComponent as FCpt, DynamicDeviceComponent
-from ophyd.sim import make_fake_device, SynAxis, FakeEpicsSignal
 from ophyd.signal import EpicsSignal
-from ophyd.status import MoveStatus, wait
-from ophyd.device import create_device_from_components
-from ophyd.ophydobj import OphydObject
-from bluesky.plans import count, scan
-from bluesky.plan_stubs import mv
-from bluesky.simulators import summarize_plan
-from bluesky.preprocessors import SupplementalData
+from ophyd.status import MoveStatus
 from collections import OrderedDict
-from collections.abc import Iterable, MutableSequence
-from ophyd.utils import (
-    ExceptionBundle,
-    RedundantStaging,
-    doc_annotation_forwarder,
-    getattrs,
-    underscores_to_camel_case,
-)
 
 
+# PV extentions for lookup table rows (ommited ZRST row because it is reserved)
 pos_sel_extensions = ["", "ONST", "TWST", "THST", "FRST", "FVST", "SXST", "SVST", "EIST", "NIST" ,"TEST", "ELST", "TVST", "TTST", "FTST", "FFST"] 
 
 
 def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names : list[str], row_number : int, **kwargs):
+    """Create a new Device class representing a row for a lookup table.
+
+    Parameters
+    ----------
+    pos_sel_dev : str
+        The dev suffix for the position selection PV.
+    col_suffixes : list[str]
+        A list of PV suffixes for each column in the lookup row.
+    col_names : list[str]
+        A list of attribute names for each column in the lookup row.
+    row_number : int
+        The row number for which the lookup row is being created.
+    
+    Returns
+    -------
+    LookupRow
+        A class representing a single row in the lookup table with dynamic components for each column.
+    """
+
 
     defn = OrderedDict({
         col_name: (EpicsSignal, "-" + col_suffix.replace("-", "").replace("}Mtr", "") + "}Val:" + str(row_number) + "-SP", {})
@@ -33,16 +38,28 @@ def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names
     
   
     class LookupRow(Device):
+        """A class representing a single row in a lookup table for motor positions.
 
-       
+        Attributes
+        ----------
+        values : DynamicDeviceComponent
+            A dynamic device component containing the values for each column in the lookup row.
+        key : Cpt(EpicsSignal)
+            An EpicsSignal component representing the key for the lookup row
+        """
+
         values = DynamicDeviceComponent(defn)
         key = Cpt(EpicsSignal, (("-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[row_number])))
 
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)       
+            super().__init__(*args, **kwargs)
             
         
         def get_row(self):
+            """Return a dictionary representation of the row following the structure:
+            {key: {col_name: value, ...}} where key is the position selection value and col_name is the name of each column.
+            """
+
             row = {}
             row_key = self.key.get()
             row[row_key] = {}
@@ -53,32 +70,67 @@ def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names
     return LookupRow
 
 
-def get_lookup_defn(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], **kwargs):
-    defn = OrderedDict()
-    
-    for i in range(1, num_rows + 1):
-        
-        LookupRow = make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, pos_sel_dev = pos_sel_dev, row_number=i)
-        defn[f"row{i}"] = (LookupRow, "", {"name" : f"row{i}"})
+def get_lookup(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], **kwargs):
 
+    """Create a lookup table component for a device with a specific number of rows and columns.
+
+    Parameters
+    ----------
+    pos_sel_dev : str
+        The dev suffix for the position selection PV.
+    num_rows : int
+        The number of rows to create in the lookup table.
+    col_suffixes : list[str]
+        A list of pv suffixes for each column in the lookup table.
+    col_names : list[str]
+        A list of attribute names for each column in the lookup table.
+
+    Returns
+    ------- 
+    DynamicDeviceComponent
+        A Device that contains num_rows LookupRow components.
+    """
+
+    defn = OrderedDict({
+        (f"row{i}") : (make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, pos_sel_dev = pos_sel_dev, row_number=i), "", {"name" : f"row{i}"})
+        for i in range(1, num_rows + 1)})
+   
     return DynamicDeviceComponent(defn)
 
 
-def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int, precision : int = 20, *args, **kwargs):
+def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int, precision : int = 20, *args, **kwargs):
+    """Create a new device class that extends the given cls with a lookup table and position selection.
+
+    Parameters
+    ----------
+    base : Device
+        The base device class to extend.
+    pos_sel_dev : str
+        The dev suffix for the position selection pv.
+    num_rows : int
+        The number of rows in the lookup table.
+    precision : int, optional
+        The precision for comparing motor values, by default 20.
+    
+    Returns
+    -------
+    DeviceWithLookup
+        A new class that adds the lookup table and position selection functionality to cls.
+    """
 
     # Gather motor components, column names, and column suffixes from cls
     motor_components = OrderedDict()
     col_names = []
     col_suffixes = []
-    for key in cls.__dict__['component_names']:
-        signal = cls.__dict__[key]
-        if (cls.__dict__[key].cls == EpicsMotor):
-            motor_components[key] = cls.__dict__[key]
+    for key in base.__dict__['component_names']:
+        signal = base.__dict__[key]
+        if (base.__dict__[key].base == EpicsMotor):
+            motor_components[key] = base.__dict__[key]
             col_names.append(key)
             col_suffixes.append(signal.suffix)
 
     
-    pos_lookup = OrderedDict(pos_lookup = get_lookup_defn(pos_sel_dev=pos_sel_dev, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
+    pos_lookup = OrderedDict(pos_lookup = get_lookup(pos_sel_dev=pos_sel_dev, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
     pos_sel = OrderedDict(pos_sel = Cpt(EpicsSignal, "-" + pos_sel_dev + "}Pos-Sel", kind = 'hinted', string=True))
 
     def __init__(self, *args, **kwargs):
@@ -87,6 +139,9 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
 
 
     def _get_motors(self):
+        """
+        Return a dictionary of motor components with their current values and setpoints.
+        """
         motors = {}
         for key in motor_components:
             motor = {}
@@ -96,6 +151,10 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
         return motors
     
     def _get_table(self):
+        """ 
+        Return a dictionary representing the lookup table where keys are the row names, 
+        and values are dictionaries of column names and their values.
+        """
         table = {}
         for i in range(1, num_rows + 1):
             key = f"row{i}"
@@ -105,6 +164,9 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
         return table
     
     def get_all_positions(self):
+        """
+        Print all possible positions from the lookup table.
+        """
         lookup = self._get_table()
         length = len(lookup)
         print(f"\n  {length} Possible Positions:")
@@ -114,6 +176,24 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
                 print(f'    {pos_name:_<15} : {tuple(lookup[pos_name].values())}')
 
     def lookup(self, name : str):
+        """
+        Look up a position by its name in the lookup table.
+
+        Parameters
+        ----------
+        name : str
+            The name of the position to look up.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the position values for the specified name.
+
+        Raises
+        ------
+        ValueError
+            If the name is not found in the lookup table.
+        """
         lookup = self._get_table()
 
         new_name = (name)
@@ -124,6 +204,24 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
         raise ValueError (f"Could not find {name} in lookup table")
     
     def lookup_by_values(self, pos : tuple[float]):
+        """
+        Look up a position by its values in the lookup table.
+
+        Parameters
+        ----------
+        pos : tuple[float]
+            A tuple of position values to look up.
+
+        Returns
+        -------
+        str
+            The name of the position that matches the provided values.
+
+        Raises
+        ------
+        ValueError
+            If no matching position is found in the lookup table.
+        """
         lookup = self._get_table()
         matched_entry = None
         for lookup_index in range(len(lookup)):
@@ -143,6 +241,10 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
             return matched_entry    
     
     def where_am_i(self):
+        """
+        Check consistency between motor values, lookup table, and Pos-Sel value.
+        Prints the current motor values, Pos-Sel value, and if they match a preset position.
+        """
         motors = self._get_motors()
         pos_sel_val = self.pos_sel.get()
 
@@ -166,18 +268,51 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
             print("\nYour motor and pos-sel values matched the position: " + matched_entry + " = ", self.lookup(matched_entry))
 
     def set_pos_sel(self, pos: str | tuple):
+        """
+        Set the Pos-Sel value to a specific position or by its name.
+
+        Parameters
+        ----------
+        pos : str | tuple
+            The position to set, either as a name (str) or as a tuple of values (tuple).
+
+        Returns
+        -------
+        """
+
         if isinstance(pos, tuple):
             pos = self.lookup_by_values(pos)
         
         return self.pos_sel.set(str(pos))
     
     def _sync_pos_sel(self, status = None):
+        """
+        Synchronize the Pos-Sel value with the current motor setpoints.
+        Parameters
+        ----------
+        status : optional
+            The status of the move operation, if applicable.
+        """
         self.set_pos_sel("Undefined")
         motors = self._get_motors()
         motor_values = tuple([motors[axis]["setpoint"] for axis in motors])
         self.set_pos_sel(motor_values)
 
     def set(self, size : str | tuple):
+        """
+        Set the motors to a specific position or by its position name.
+
+
+        Parameters
+        ----------
+        size : str | tuple
+            The position to set, either as a name (str) or as a tuple of values (tuple).
+
+        Returns
+        -------
+        MoveStatus
+            A MoveStatus object indicating the status of the move operation.
+        """
 
         if isinstance(size, str):
             values = list(self.lookup(size).values())
@@ -197,15 +332,13 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
 
         move_status.add_callback(self._sync_pos_sel)
         return move_status
-    
-    docstring = (f"DeviceWithLookup Device")
 
-    read_attrs_names = ["pos_lookup", "pos_sel"].extend(col_names)
-
+    # Create the class dictionary with all methods and attributes
     clsdict = OrderedDict(
-            __doc__=docstring,
-            _default_read_attrs=read_attrs_names,
+            __doc__=(f"DeviceWithLookup Device"),
+            _default_read_attrs=["pos_lookup", "pos_sel"].extend(col_names), # Assign read-attrs to new class
             _default_configuration_attrs=[],
+            # Add new methods
             __init__ = __init__,
             _get_motors = _get_motors,
             _get_table = _get_table,
@@ -218,9 +351,11 @@ def make_device_with_lookup_table(cls : Device, pos_sel_dev: str, num_rows: int,
             set = set
         )
 
+    # Add new components
     clsdict = clsdict | motor_components | pos_sel | pos_lookup
     
-    DeviceWithLookup = type("DeviceWithLookup", (cls,), clsdict, **{})
+    # Create the new class with the new  components and methods
+    DeviceWithLookup = type("DeviceWithLookup", (base,), clsdict, **{})
 
     return DeviceWithLookup
 
