@@ -187,8 +187,6 @@ def add_cam_rois(cam):
 
 # Front End Shutter Classes
 class EPSTwoStateDevice(Device):
-    # @tcaswell, the names don't need to be fixed. These commands run
-    # when the record is processed, you could as easily poke .PROC
     state1_cmd = FCpt(EpicsSignal, '{self.prefix}Cmd:{self._state1_nm}-Cmd',
                         string=True)
     state2_cmd = FCpt(EpicsSignal, '{self.prefix}Cmd:{self._state2_nm}-Cmd',
@@ -282,8 +280,6 @@ class EPSTwoStateDevice(Device):
         self.state2_val = state2
 
 class TwoButtonShutter(Device):
-    # TODO: this needs to be fixed in EPICS as these names make no sense
-    # the value coming out of the PV does not match what is shown in CSS
     RETRY_PERIOD = 0.5
     MAX_ATTEMPTS = 10
     open_cmd = Cpt(EpicsSignal, 'Cmd:Opn-Cmd', string=True)
@@ -545,7 +541,7 @@ FE_shutter = TwoButtonShutter('XF:23ID-PPS{Sh:FE}', name='FE_shutter')
 
 
 # Front End Slits
-FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
+FEslt = EPSTwoStateDevice('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
 
 
 # Fluo Screen 1 motor
@@ -559,17 +555,30 @@ bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm')
 cam_fs1_hdf5 = add_cam_rois(StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}', name = 'cam_fs1_hdf5'))
 
 
-# Turn the np array from a fluo screen scan into image with ROIs
-def make_fluo_img(img):
+# Use count to take a scan of the fluoscreen and turn it plot it as an image with rois
+def make_fluo_img():
+    yield from (count(cam_fs1_hdf5))
+    img = np.array(list(db[-1].data("cam_fs1_hdf5_image")))[0][0]
     fig, ax = plt.subplots()
     imgplot = ax.imshow(img)
 
-    rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
-    rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
-    rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
-    rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
+    rectangle1 = patches.Rectangle((cam_fs1_hdf5.roi1.min_xyz.min_x.get(), cam_fs1_hdf5.roi1.min_xyz.min_y.get()), 
+                                   cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), 
+                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
+    
+    rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), 
+                                   cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), 
+                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
+    
+    rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), 
+                                   cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), 
+                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
+    
+    rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), 
+                                   cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), 
+                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
 
-
+    # Assign patches to variables to reference for removing 
     roi1 = ax.add_patch(rectangle1)
     roi2 = ax.add_patch(rectangle2)
     roi3 = ax.add_patch(rectangle3)
@@ -580,12 +589,12 @@ def make_fluo_img(img):
 
 
 # EPUs (copied from csx1/startup/accelerator.py)
-# epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
-# epu2 = EPU('XF:23ID-ID{EPU:2', epu_prefix='SR:C23-ID:G1A{EPU:2', ai_prefix='SR:C31-{AI}23-2', name='epu2', labels=['source'])
+epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
+epu2 = EPU('XF:23ID-ID{EPU:2', epu_prefix='SR:C23-ID:G1A{EPU:2', ai_prefix='SR:C31-{AI}23-2', name='epu2', labels=['source'])
 
 
 # M1A Mirror (copied from csx1/startup/optics.py)
-# m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
+m1a = FMBHexapodMirror('XF:23IDA-OP:1{Mir:1', name='m1a', labels=['optics'])
 
 # Canting magnet readback value
 canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
@@ -594,8 +603,11 @@ canter = EpicsSignalRO('SR:C23-MG:G1{MG:Cant-Ax:X}Mtr.RBV', name='canter')
 phaser = EpicsMotor('SR:C23-MG:G1{MG:Phaser-Ax:Y}Mtr',name='phaser')
 
 
-sd.baseline.extend([FEslt.x.gap.readback, 
-          FEslt.x.cent.readback, 
-          FEslt.y.gap.readback, 
-          FEslt.y.cent.readback,
-          fs_diag1_x])
+# sd.baseline.extend([FEslt.x.gap.readback, 
+#           FEslt.x.cent.readback, 
+#           FEslt.y.gap.readback, 
+#           FEslt.y.cent.readback,
+#           fs_diag1_x.pos_sel,
+#           fs_diag1_x.x.user_readback,
+#           canter,
+#           phaser.user_readback])
