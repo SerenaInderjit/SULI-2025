@@ -2,7 +2,7 @@ import ophyd
 from ophyd import EpicsMotor, sim, Device, Kind
 from ophyd import Component as Cpt, FormattedComponent as FCpt, DynamicDeviceComponent
 from ophyd.signal import EpicsSignal
-from ophyd.status import MoveStatus
+from ophyd.status import Status
 from collections import OrderedDict
 
 
@@ -105,8 +105,8 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
     ----------
     base : Device
         The base device class to extend.
-    pos_sel_dev : str
-        The dev suffix for the position selection pv.
+    lut_suffix : str
+        The lookup table suffix to be added to the prefix.
     num_rows : int
         The number of rows in the lookup table.
     precision : int, optional
@@ -124,7 +124,7 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
     col_suffixes = []
     for key in base.__dict__['component_names']:
         signal = base.__dict__[key]
-        if (base.__dict__[key].base == EpicsMotor):
+        if (base.__dict__[key] == EpicsMotor):
             motor_components[key] = base.__dict__[key]
             col_names.append(key)
             col_suffixes.append(signal.suffix)
@@ -267,7 +267,7 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
         else:
             print("\nYour motor and pos-sel values matched the position: " + matched_entry + " = ", self.lookup(matched_entry))
 
-    def set_pos_sel(self, pos: str | tuple):
+    def set_pos_sel(self, pos: str | tuple) -> Status:
         """
         Set the Pos-Sel value to a specific position or by its name.
 
@@ -298,9 +298,9 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
         motor_values = tuple([motors[axis]["setpoint"] for axis in motors])
         self.set_pos_sel(motor_values)
 
-    def set(self, size : str | tuple):
+    def set(self, size : str | tuple) -> Status:
         """
-        Set the motors to a specific position or by its position name.
+        Set the motors to a specific position or by its position name and sync it with the pos_sel signal.
 
 
         Parameters
@@ -359,7 +359,7 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
 
     return DeviceWithLookup
 
-slt3WithLookup = make_device_with_lookup_table(SlitsXY, pos_sel_dev="LUT", num_rows=10, precision=3)('XF:23ID1-OP{Slt:3', name = "slt3WithLookup")
+# slt3WithLookup = make_device_with_lookup_table(SlitsXY, pos_sel_dev="LUT", num_rows=10, precision=3)('XF:23ID1-OP{Slt:3', name = "slt3WithLookup")
 
 
 
