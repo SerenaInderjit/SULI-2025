@@ -258,7 +258,7 @@ class EPSTwoStateDevice(Device):
                     # Retry setting the command to 1.
                     cmd_sig.set(1)
                     ts = datetime.datetime.fromtimestamp(timestamp).strftime(_time_fmtstr)
-                    print('** ({}) Had to reactuate shutter while {}ing v2'.format(ts, val))
+                    print('** ({}) Had to reactuate shutter while {}ing'.format(ts, val))
 
         cmd_sig.subscribe(cmd_retry_cb, run=False)
         self.status.subscribe(shutter_cb)
@@ -479,6 +479,47 @@ def make_fluo_img(header):
 
     imgplot.set_cmap('jet')
     plt.show()
+
+def make_ROI_patches(num_patches, header, H1=0, V1=0):
+    cam_name = header.start['detectors'][0]
+    cam_config = header.descriptors[0]['configuration'][cam_name]['data']
+
+    patch_lst = [None]
+
+    for i in range(1, num_patches + 1):
+        x = cam_config[f'{cam_name}_roi{i}_min_xyz_min_x'] - H1
+        y = cam_config[f'{cam_name}_roi{i}_min_xyz_min_y'] - V1
+        width = cam_config[f'{cam_name}_roi{i}_size_x']
+        height = cam_config[f'{cam_name}_roi{i}_size_y']
+        patch_lst.append( patches.Rectangle((x, y), width, height, linewidth=1, edgecolor='aquamarine', facecolor='none', label = f'ROI{i}'))
+
+    return patch_lst
+
+def add_patches(patch_lst, ax):
+    for i in range (1, len(patch_lst)):
+        ax.add_patch(patch_lst[i])
+def plot_image():
+
+    x_offsets = [0, 0.009]
+    V1, V2, H1, H2 = 500-40, 1000-40, 1350-10, 1500-10
+    fig, ax = plt.subplots(1, figsize=(5, 5) )
+    # ax = axes[1]
+    h = db[208764]
+    img = np.array(list(h.data('cam_fs1_hdf5_image')))
+    img = np.squeeze(img)
+    img = np.mean(img, axis=0)
+    print(img.shape)
+    im = ax.imshow(img[V1:V2, H1:H2], vmin =7500, vmax = 15_000, aspect='auto')
+    plt.colorbar(im, ax=ax, shrink = .3)
+    patch_lst = make_ROI_patches(4, h, H1=H1, V1=V1)
+    add_patches(patch_lst, ax)
+    ax.set(title=f' X-angle Position\n{x_offsets[1]:.4f}m-rad ')
+    ax.axis('off')
+    
+
+
+
+
 
 
 # EPUs (copied from csx1/startup/accelerator.py)
