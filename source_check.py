@@ -240,9 +240,28 @@ class SourceCheck():
                             print(f"yield from {plan.__name__}({motor}, {target})")
                             return True
 
+    def prompt_and_act(self, prompts, actions, defaults, current_step):
+        """Prompt the user with a list of prompts and actions, and execute the actions based on the user's input.
         
-            
-            
+        Parameters
+        ----------
+        prompts : list of str
+                The messages to display to the user.
+        actions : list of tuple | Callable
+                The plans to execute if the user confirms.
+        defaults : list of str
+                The default responses for each prompt.
+        current_step : Callable
+                The function representing the current step in the source check process.
+        """
+        for prompt, action, default in zip(prompts, actions, defaults):
+            if default == 'y':
+                if not self.confirm_default_y(prompt, action, current_step):
+                    return False
+            else:
+                if not self.confirm_default_n(prompt, action, current_step):
+                    return False
+        return True
 
 
     def do_Prep(self):
@@ -254,7 +273,7 @@ class SourceCheck():
         print("\n\tFE Shutter")
         print("\t-----------")
         if FE_shutter.status.get() != 'Closed':
-            if not self.input_default_y(self.do_Prep, "\n\tClose FE Shutter? ([y]/n)", (mv, FE_shutter, 'Close')): return
+            if not self.confirm_default_y("\n\tClose FE Shutter? ([y]/n)", (mv, FE_shutter, 'Close'), self.do_Prep): return
             
         else:
             print("\n\tFE Shutter is closed")
@@ -296,18 +315,16 @@ class SourceCheck():
 
         if (epu1.phase.setpoint.get() != 0):
 
-            if not self.input_default_n(self.do_Prep, 
-                                        (f"\n\tThe current EPU1 phase is {epu1_ops['phase']}. Set EPU1 phase to 0? (y/n)"), 
-                                        (mv, epu1.phase, 0)): return
+            if not self.confirm_default_n((f"\n\tThe current EPU1 phase is {epu1_ops['phase']}. Set EPU1 phase to 0? (y/n)"), 
+                                        (mv, epu1.phase, 0), self.do_Prep): return
             
         else:
             print("\n\tEPU1 phase is 0")
     
         if (epu2.phase.setpoint.get() != 0):
 
-            if not self.input_default_n(self.do_Prep, 
-                                        (f"\n\tThe current EPU2 phase is {epu2_ops['phase']}. Set EPU2 phase to 0? (y/n)"), 
-                                        (mv, epu2.phase, 0)): return
+            if not self.confirm_default_n((f"\n\tThe current EPU2 phase is {epu2_ops['phase']}. Set EPU2 phase to 0? (y/n)"), 
+                                        (mv, epu2.phase, 0), self.do_Prep): return
             
         else:
             print("\n\tEPU2 phase is 0")
@@ -315,43 +332,56 @@ class SourceCheck():
         print()
         self.end_step(self.do_Step1, "Detuned Source")
 
+
     def do_Step1(self):
 
         print("\nStep 1 - detuned source\n")
         print("--------------------------")
 
-        # Set EPU1 Gap to 100
-        if not self.confirm_default_y("\n\tSet EPU1 Gap to 100. Confirm ([y]/n).", (mv, epu1.gap, 100), self.do_Step1): return
+        prompts = [
+            "\n\tSet EPU1 Gap to 100. Confirm ([y]/n).",
+            "\n\tSet EPU2 Gap to 100. Confirm ([y]/n).",
+            "\n\tOpen FE slits. Confirm (y/[n]).",
+            "\n\tMove m1a to 'out' position. Confirm (y/[n]).",
+            "\n\tOpen FE shutter. Confirm (y/[n]).",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
+        ]
 
-        # Set EPU2 Gap to 100
-        if not self.confirm_default_y("\n\tSet EPU2 Gap to 100. Confirm ([y]/n).", (mv, epu2.gap, 100), self.do_Step1): return
+        actions = [
+            (mv, epu1.gap, 100),
+            (mv, epu2.gap, 100),
+            FEslt.mv_open,
+            m1a.mv_out,
+            (mv, FE_shutter, 'Open'),
+            make_fluo_img
+        ]
         
-        # Open FE slits
-        if not self.confirm_default_n("\n\tOpen FE slits. Confirm (y/[n]).", FEslt.mv_open, self.do_Step1): return
-        
-        # Move m1a out
-        if not self.confirm_default_n("\n\tMove m1a to 'out' position. Confirm (y/[n]).", m1a.mv_out, self.do_Step1): return
-        
-        # Open FE shutter
-        if not self.confirm_default_n("\n\tOpen FE shutter. Confirm (y/[n]).", (mv, FE_shutter, 'Open'), self.do_Step1): return
+        defaults = ['y', 'y', 'n', 'n', 'n', 'y']
 
-        # Take photo of FSdiag
-        if not self.confirm_default_n("\n\tTake photo of FSdiag. Confirm ([y]/n).", make_fluo_img, self.do_Step1): return
-
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step1): return
 
         print()
         self.end_step(self.do_Step2, "IOS Source")
+
 
     def do_Step2(self):
 
         print("\nStep 2 - ios source\n")
         print("--------------------------")
 
-        # Set EPU1 Gap to 82
-        if not self.confirm_default_y("\n\tSet EPU1 Gap to 82. Confirm ([y]/n)", (mv, epu1.gap, 82), self.do_Step2): return
+        prompts = [
+            "\n\tSet EPU1 Gap to 82. Confirm ([y]/n)", 
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
+        ]
 
-        # Take photo of FSdiag
-        if not self.confirm_default_n("\n\tTake photo of FSdiag. Confirm ([y]/n).", make_fluo_img, self.do_Step1): return
+        actions = [
+            (mv, epu1.gap, 82),
+            make_fluo_img
+        ]
+
+        defaults = ['y', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step2): return
 
         print()
         self.end_step(self.do_Step3, "CSX Source")
@@ -360,86 +390,171 @@ class SourceCheck():
     def do_Step3(self):
 
         print("\nStep 3 - csx source\n")
+        print("--------------------------")
 
-        # Set EPU1 Gap to 100
-        print("Set EPU1 Gap to 100. Confirm ([y]/n)")
+        prompts = [
+            "\n\tSet EPU1 Gap to 100. Confirm ([y]/n)", 
+            "\n\tSet EPU2 Gap to 85. Confirm ([y]/n)", 
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
+        ]
 
-        print("Set EPU2 Gap to 85. Confirm ([y]/n)")
-        
-        print("Take photo of FSdiag. Confirm ([y]/n)")
+        actions = [
+            (mv, epu1.gap, 100),
+            (mv, epu2.gap, 85),
+            make_fluo_img
+        ]
 
-        self.source_check_manual()
+        defaults = ['y', 'y', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step3): return
+        print()
+        self.end_step(self.do_Step3, "Source")
 
 
     def do_Step4(self):
 
         print("\nStep 4 - source\n")
+        print("--------------------------")
 
-        print("Set EPU1 Gap to 82. Confirm ([y]/n)")
-        
-        print("Take photo of FSdiag. Confirm ([y]/n)")
+        prompts = [
+            "\n\tSet EPU1 Gap to 82. Confirm ([y]/n)", 
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
+        ]
 
-        self.source_check_manual()
+        actions = [
+            (mv, epu1.gap, 82),
+            make_fluo_img
+        ]
+
+        defaults = ['y', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step4): return
+
+        print()
+        self.end_step(self.do_Step3, "Check Slits")
 
     def do_Step5(self):
         
-        print("\nStep 5 - check slits1n]")
+        print("\nStep 5 - check slits]")
+        print("--------------------------")
 
-        print("Set Y Gap of FE slits to {operating pos}. Confirm (y/[n])")
+        prompts = [
+             f"\n\tSet X Gap of FE slits to operating position: {self.FEslt_ops['x_gap']}. Confirm (y/[n])",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)"
+        ]
 
-        print("Take photo of FSdiag. Confirm ([y]/n)")
+        actions = [
+            (mv, FEslt.x.gap, self.FEslt_ops['x_gap']),
+            make_fluo_img
+        ]
 
-        self.source_check_manual()
+        defaults = ['n', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step5): return
+
+        print()
+        self.end_step(self.do_Step3, "Check M1a Position")
 
     def do_Step6(self):
 
         print("\nStep 6 - check m1a pos\n")
+        print("--------------------------")
 
-        print("Close FE shutter. Confirm ([y]/n)")
 
-        print("Move m1a to {normal operating pos}. Confirm (y/[n])")
+        prompts = [
+            "\n\tClose FE shutter. Confirm ([y]/n)",
+            f"\n\tMove m1a to operating position: {self.m1a_ops}. Confirm (y/[n])",
+            "\n\tOpen FE slits. Confirm (y/[n])",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)"
+        ]
 
-        print("Open FE slits. Confirm (y/[n])")
+        actions = [
+            (mv, FE_shutter, 'Close'),
+            (mv, m1a, self.m1a_ops),
+            FEslt.mv_open,
+            make_fluo_img
+        ]
 
-        print("Take photo of FSdiag. Confirm ([y]/n)")
+        defaults = ['y', 'n', 'n', 'y']
 
-        self.source_check_manual()
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step6): return
+
+        print()
+        self.end_step(self.do_Step3, "Check Pink Beam")
 
     def do_Step7(self):
 
         print("\nStep 7 - check pink beam\n")
-        
-        print("Close FE shutter. Confirm ([y]/n)")
+        print("--------------------------")
 
-        print("Set FS diag to Pink Beam position. Confirm (y/[n])")
-        
-        print("Open FE shutter. Confirm (y/[n])")
-        
-        print("Take photo of FSdiag. Confirm ([y]/n)")
 
-        print("Close FE shutter. Confirm ([y]/n)")
+        prompts = [
+            "\n\tClose FE shutter. Confirm ([y]/n)",
+            "\n\tSet FS diag to Pink Beam position. Confirm (y/[n])",
+            "\n\tOpen FE shutter. Confirm (y/[n])",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)"
+        ]
 
-        self.source_check_manual()
+        actions = [
+            (mv, FE_shutter, 'Close'),
+            (mv, fs_diag1_x, 'Pink Beam'),
+            (mv, FE_shutter, 'Open'),
+            make_fluo_img
+        ]
+
+        defaults = ['y', 'n', 'n', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step7): return
+        
+
+        print()
+        self.end_step(self.do_Step3, "Check Pink Beam & Slits")
 
     def do_Step8(self):
 
         print("\nStep 8 - check pink beam & slits\n")
+        print("-----------------------------------")
 
-        print("Setting FEslt to {normal operating pos}. Confirm (y/[n])")
+        prompts = [
+            "\n\tClose FE shutter. Confirm ([y]/n)",
+            f"\n\tSet FEslt to operating position: {self.FEslt_ops}. Confirm (y/[n])",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)"
+        ]
 
-        print("Take photo of FSdiag. Confirm ([y]/n)")
+        actions = [
+            (mv, FE_shutter, 'Close'),
+            (mv, FEslt, self.FEslt_ops),
+            make_fluo_img
+        ]
 
-        self.source_check_manual()
+        defaults = ['y', 'n', 'y']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_Step8): return
+
+        print()
+        self.end_step(self.do_Step3, "Return to OPS")
+
 
     def do_ReturnToOPS(self):
 
         print("\nEnd - return to operating positions\n")
+        print("-------------------------------------")
 
-        print("Close FE shutters. Confirm ([y]/n)")
+        prompts = [
+            "\n\tClose FE shutter. Confirm ([y]/n)",
+            "\n\tSet FS diag to 'out'. Confirm ([y]/n)",
+            "\n\tOpen FE shutter. Confirm (y/[n])"
+        ]
 
-        print("Set FS diag to 'out'. Confirm ([y]/n)")
+        actions = [
+            (mv, FE_shutter, 'Close'),
+            (mv, fs_diag1_x, 'out'),
+            (mv, FE_shutter, 'Open')
+        ]
 
-        print("Open FE shutter. Confirm (y/[n])")
+        defaults = ['y', 'y', 'n']
+
+        if not self.prompt_and_act(prompts, actions, defaults, self.do_ReturnToOPS): return
 
     def do_Quit(self):
         return
