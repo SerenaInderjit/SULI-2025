@@ -10,12 +10,12 @@ from collections import OrderedDict
 pos_sel_extensions = ["", "ONST", "TWST", "THST", "FRST", "FVST", "SXST", "SVST", "EIST", "NIST" ,"TEST", "ELST", "TVST", "TTST", "FTST", "FFST"] 
 
 
-def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names : list[str], row_number : int, **kwargs):
+def make_lookup_row(*args, lut_suffix : str, col_suffixes: list[str], col_names : list[str], row_number : int, **kwargs):
     """Create a new Device class representing a row for a lookup table.
 
     Parameters
     ----------
-    pos_sel_dev : str
+    lut_suffix : str
         The dev suffix for the position selection PV.
     col_suffixes : list[str]
         A list of PV suffixes for each column in the lookup row.
@@ -49,7 +49,7 @@ def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names
         """
 
         values = DynamicDeviceComponent(defn)
-        key = Cpt(EpicsSignal, (("-" + pos_sel_dev + "}Pos-Sel." + pos_sel_extensions[row_number])))
+        key = Cpt(EpicsSignal, (("-" + lut_suffix + "}Pos-Sel." + pos_sel_extensions[row_number])))
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -70,13 +70,13 @@ def make_lookup_row(*args, pos_sel_dev : str, col_suffixes: list[str], col_names
     return LookupRow
 
 
-def get_lookup(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str], col_names : list[str], **kwargs):
+def get_lookup(*args, lut_suffix : str, num_rows : int, col_suffixes : list[str], col_names : list[str], **kwargs):
 
     """Create a lookup table component for a device with a specific number of rows and columns.
 
     Parameters
-    ----------
-    pos_sel_dev : str
+    ---------- 
+    lut_suffix : str
         The dev suffix for the position selection PV.
     num_rows : int
         The number of rows to create in the lookup table.
@@ -92,13 +92,13 @@ def get_lookup(*args, pos_sel_dev : str, num_rows : int, col_suffixes : list[str
     """
 
     defn = OrderedDict({
-        (f"row{i}") : (make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, pos_sel_dev = pos_sel_dev, row_number=i), "", {"name" : f"row{i}"})
+        (f"row{i}") : (make_lookup_row(col_suffixes=col_suffixes, col_names=col_names, lut_suffix = lut_suffix, row_number=i), "", {"name" : f"row{i}"})
         for i in range(1, num_rows + 1)})
    
     return DynamicDeviceComponent(defn)
 
 
-def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int, precision : int = 20, *args, **kwargs):
+def make_device_with_lookup_table(base : Device, lut_suffix: str, num_rows: int, precision : int = 20, *args, **kwargs):
     """Create a new device class that extends the given cls with a lookup table and position selection.
 
     Parameters
@@ -130,8 +130,8 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
             col_suffixes.append(signal.suffix)
 
     
-    pos_lookup = OrderedDict(pos_lookup = get_lookup(pos_sel_dev=pos_sel_dev, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
-    pos_sel = OrderedDict(pos_sel = Cpt(EpicsSignal, "-" + pos_sel_dev + "}Pos-Sel", kind = 'hinted', string=True))
+    pos_lookup = OrderedDict(pos_lookup = get_lookup(lut_suffix=lut_suffix, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
+    pos_sel = OrderedDict(pos_sel = Cpt(EpicsSignal, "-" + lut_suffix + "}Pos-Sel", kind = 'hinted', string=True))
 
     def __init__(self, *args, **kwargs):
         super(type(self), self).__init__(*args, **kwargs)
@@ -278,6 +278,8 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
 
         Returns
         -------
+        Status
+            A Status object.
         """
 
         if isinstance(pos, tuple):
@@ -310,8 +312,8 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
 
         Returns
         -------
-        MoveStatus
-            A MoveStatus object indicating the status of the move operation.
+        Status
+            A Status object indicating the status of the move operation.
         """
 
         if isinstance(size, str):
@@ -359,7 +361,7 @@ def make_device_with_lookup_table(base : Device, pos_sel_dev: str, num_rows: int
 
     return DeviceWithLookup
 
-# slt3WithLookup = make_device_with_lookup_table(SlitsXY, pos_sel_dev="LUT", num_rows=10, precision=3)('XF:23ID1-OP{Slt:3', name = "slt3WithLookup")
+
 
 
 
