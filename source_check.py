@@ -4,7 +4,7 @@ from bluesky.plans import count
 import os, subprocess, inspect
 from rich import print as cprint
 from typing import Callable
-from source_check_devices import FE_shutter, m1a, epu1, epu2, FEslt, canter, phaser, fs_diag1_x, cam_fs1_hdf5, make_fluo_img
+from source_check_devices import *
 
 
 # sd.baseline.extend([FEslt.x.gap.readback, 
@@ -234,14 +234,14 @@ class SourceCheck():
                         if isinstance(action, Callable):
                             #  yield from action()
                              print(f"yield from {action.__name__}")
-                        else:
+                        if isinstance(action, tuple):
                             plan, motor, target = action
                             # yield from plan(signal, target)
                             print(f"yield from {plan.__name__}({motor}, {target})")
                             return True
 
     def prompt_and_act(self, prompts, actions, defaults, current_step):
-        """Prompt the user with a list of prompts and actions, and execute the actions based on the user's input.
+        """Prompt the user with a list of prompts for actions, and execute the actions based on the user's input.
         
         Parameters
         ----------
@@ -295,8 +295,8 @@ class SourceCheck():
         
         FSdiag_ops = {"x" : round(fs_diag1_x.x.user_setpoint.get(), 4)}
         
-        epu1_ops = {"gap" : round(epu1.gap.setpoint.get(), 4), "phase" : round(epu1.phase.setpoint.get(), 4)}
-        epu2_ops = {"gap" : round(epu2.gap.setpoint.get(), 4), "phase" : round(epu2.phase.setpoint.get(), 4)}
+        epu1_ops = {"gap" : round(epu1.gap.setpoint.get(), 4), "phase" : round(epu1.phase.readback.get(), 4)}
+        epu2_ops = {"gap" : round(epu2.gap.setpoint.get(), 4), "phase" : round(epu2.phase.readback.get(), 4)}
         
         print(f"\n\tRecording current M1a position as \n")
         print_dict(m1a_ops)
@@ -339,24 +339,29 @@ class SourceCheck():
         print("--------------------------")
 
         prompts = [
+            
+            "\n\tMove FSdiag to 'Both'. Confirm ([y]/n).",
             "\n\tSet EPU1 Gap to 100. Confirm ([y]/n).",
             "\n\tSet EPU2 Gap to 100. Confirm ([y]/n).",
-            "\n\tOpen FE slits. Confirm (y/[n]).",
             "\n\tMove m1a to 'out' position. Confirm (y/[n]).",
             "\n\tOpen FE shutter. Confirm (y/[n]).",
-            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
+            "\n\tTake photo of FSdiag. Confirm ([y]/n).",
+            "\n\tOpen FE slits. Confirm (y/[n])."
+            "\n\tTake photo of FSdiag. Confirm ([y]/n).",
         ]
 
         actions = [
+            (mv, fs_diag1_x, 'Both'),
             (mv, epu1.gap, 100),
             (mv, epu2.gap, 100),
-            FEslt.mv_open,
             m1a.mv_out,
             (mv, FE_shutter, 'Open'),
+            make_fluo_img,
+            FEslt.mv_open,
             make_fluo_img
         ]
         
-        defaults = ['y', 'y', 'n', 'n', 'n', 'y']
+        defaults = ['y', 'y', 'y', 'n', 'n', 'y', 'n', 'y']
 
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step1): return
 

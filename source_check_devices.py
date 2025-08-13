@@ -410,9 +410,8 @@ class BPM(Device):
 
 # Fs_diag1_x Classes
 
-class single_motor_device(Device):
+class single_axis_x(Device):
     x = Cpt(EpicsMotor,'-Ax:X}Mtr', name='x', labels=['motors'])
-
 
 
 
@@ -432,11 +431,11 @@ FE_shutter = EPSTwoStateDevice('XF:23ID1-PPS{PSh}',
 
 
 # Front End Slits
-# FEslt = EPSTwoStateDevice('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
+FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
 
 
 # Fluo Screen 1 motor
-fs_diag1_x = make_device_with_lookup_table(single_motor_device, lut_suffix='Ax:X', num_rows=10, precision=2)('XF:23IDA-BI:1{FS:1', name = 'fs_diag1_x') # startup.optics
+fs_diag1_x = make_device_with_lookup_table(single_axis_x, lut_suffix='Ax:X', num_rows=10, precision=2)('XF:23IDA-BI:1{FS:1', name = 'fs_diag1_x') # startup.optics
 
 # Beam Position Monitor
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm') # startup/accelerator (DONE)
@@ -445,40 +444,6 @@ bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm') # startup/accelerator (DONE)
 # Fluo Screen 1 HDF5 Camera (copied from csx1/startup/detectors.py)
 cam_fs1_hdf5 = add_cam_rois(StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}', name = 'cam_fs1_hdf5'))
 
-
-# Use count to take a scan of the fluoscreen and turn it plot it as an image with rois
-def make_fluo_img(header):
-    # yield from (count(cam_fs1_hdf5))
-    img = np.array(list(header.data("cam_fs1_hdf5_image")))[0][0]
-    fig, ax = plt.subplots()
-    imgplot = ax.imshow(img)
-
-    cam_config = header.descriptors[0]['configuration']['cam_fs1_hdf5']['data']
-
-    rectangle1 = patches.Rectangle((cam_config['cam_fs1_hdf5_roi1_min_xyz_min_x'], cam_config['cam_fs1_hdf5_roi1_min_xyz_min_y']), 
-                                   cam_fs1_hdf5.roi1.size.x.get(), cam_fs1_hdf5.roi1.size.y.get(), 
-                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI1')
-    
-    rectangle2 = patches.Rectangle((cam_fs1_hdf5.roi2.min_xyz.min_x.get(), cam_fs1_hdf5.roi2.min_xyz.min_y.get()), 
-                                   cam_fs1_hdf5.roi2.size.x.get(), cam_fs1_hdf5.roi2.size.y.get(), 
-                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI2')
-    
-    rectangle3 = patches.Rectangle((cam_fs1_hdf5.roi3.min_xyz.min_x.get(), cam_fs1_hdf5.roi3.min_xyz.min_y.get()), 
-                                   cam_fs1_hdf5.roi3.size.x.get(), cam_fs1_hdf5.roi3.size.y.get(), 
-                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI3')
-    
-    rectangle4 = patches.Rectangle((cam_fs1_hdf5.roi4.min_xyz.min_x.get(), cam_fs1_hdf5.roi4.min_xyz.min_y.get()), 
-                                   cam_fs1_hdf5.roi4.size.x.get(), cam_fs1_hdf5.roi4.size.y.get(), 
-                                   linewidth = 1, edgecolor='aquamarine', facecolor='none', label = 'ROI4')
-
-    # Assign patches to variables to reference for removing 
-    roi1 = ax.add_patch(rectangle1)
-    roi2 = ax.add_patch(rectangle2)
-    roi3 = ax.add_patch(rectangle3)
-    roi4 = ax.add_patch(rectangle4)
-
-    imgplot.set_cmap('jet')
-    plt.show()
 
 def make_ROI_patches(num_patches, header, H1=0, V1=0):
     cam_name = header.start['detectors'][0]
@@ -496,31 +461,57 @@ def make_ROI_patches(num_patches, header, H1=0, V1=0):
     return patch_lst
 
 def add_patches(patch_lst, ax):
+    patch_references = [None]
     for i in range (1, len(patch_lst)):
-        ax.add_patch(patch_lst[i])
-def plot_image():
+        patch_references.append(ax.add_patch(patch_lst[i]))
+    return patch_references
 
-    x_offsets = [0, 0.009]
-    V1, V2, H1, H2 = 500-40, 1000-40, 1350-10, 1500-10
-    fig, ax = plt.subplots(1, figsize=(5, 5) )
-    # ax = axes[1]
-    h = db[208764]
-    img = np.array(list(h.data('cam_fs1_hdf5_image')))
-    img = np.squeeze(img)
-    img = np.mean(img, axis=0)
-    print(img.shape)
+def remove_patches(patch_lst):
+    for patch_ref in patch_lst:
+        patch_ref.remove()
+
+def plot_img_with_ROI(header, title='Image with ROIs'):
+    V1, V2, H1, H2 = 460, 960, 1340, 1490
+    fig, ax = plt.subplots(1, figsize=(5, 5) ) 
+    cam_name = header.start['detectors'][0]
+    img = np.mean(np.squeeze(np.array(list(header.data(f'{cam_name}_image')))), axis=0)
     im = ax.imshow(img[V1:V2, H1:H2], vmin =7500, vmax = 15_000, aspect='auto')
     plt.colorbar(im, ax=ax, shrink = .3)
-    patch_lst = make_ROI_patches(4, h, H1=H1, V1=V1)
+    patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
     add_patches(patch_lst, ax)
-    ax.set(title=f' X-angle Position\n{x_offsets[1]:.4f}m-rad ')
+    ax.set(title=title)
     ax.axis('off')
-    
 
+# Use count to take a scan of the fluoscreen and plot it as an image with rois
+def make_fluo_img(md):
+    yield from count([cam_fs1_hdf5], md={'purpose':'source check', 'source check':md})
+    plot_img_with_ROI(db[-1], title=md)
 
+def compare_images(h1, h2):
+    V1, V2, H1, H2 = 460, 960, 1340, 1490
+    fig, axes = plt.subplots(1,3, figsize=(10, 3) )
+    cam_name = h1.start['detectors'][0]
+    headers = [h1, h2]
+    images = []
+    for i in range(0, 2):
+        ax = axes[i]
+        header = headers[i]
+        img = np.mean(np.squeeze(np.array(list(header.data(f'{cam_name}_image')))), axis=0)
+        images.append(img)
+        im = ax.imshow(img[V1:V2, H1:H2], vmin =7500, vmax = 15_000, aspect='auto')
+        plt.colorbar(im, ax=ax, shrink = .3)
+        patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
+        added_patches = add_patches(patch_lst, ax)
+        ax.set(title=f'Image {i + 1}')
+        ax.axis('off')
 
-
-
+    ax = axes[2]
+    im = ax.imshow((images[1] - images[0])[V1:V2, H1:H2], aspect='auto',)
+    plt.colorbar(im, ax=ax, shrink = .3)
+    patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
+    added_patches = add_patches(patch_lst, ax)
+    ax.axis('off')
+    ax.set(title=f'Difference\n Observable X-angle Shift')
 
 # EPUs (copied from csx1/startup/accelerator.py)
 epu1 = EPU('XF:23ID-ID{EPU:1', epu_prefix='SR:C23-ID:G1A{EPU:1', ai_prefix='SR:C31-{AI}23', name='epu1')
