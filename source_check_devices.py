@@ -421,9 +421,8 @@ class single_axis_x(Device):
 
 
 # Front End Shutter
-# FE_shutter = TwoButtonShutter('XF:23ID-PPS{Sh:FE}', name='FE_shutter')
-
-FE_shutter = EPSTwoStateDevice('XF:23ID1-PPS{PSh}',
+# startup/optics.py (DONE)
+FE_shutter = EPSTwoStateDevice('XF:23ID1-PPS{Sh:FE}}',
                                state1='Not Closed', state2='Closed',
                                cmd_str1='Opn', cmd_str2='Cls',
                                nm_str1='Opn', nm_str2='Cls',
@@ -431,11 +430,12 @@ FE_shutter = EPSTwoStateDevice('XF:23ID1-PPS{PSh}',
 
 
 # Front End Slits
+# startup/optics.py (DONE)
 FEslt = FrontEndSlit('FE:C23A-OP{Slt:12', name = 'FEslt', labels=['optics'])
 
 
 # Fluo Screen 1 motor
-fs_diag1_x = make_device_with_lookup_table(single_axis_x, lut_suffix='Ax:X', num_rows=10, precision=2)('XF:23IDA-BI:1{FS:1', name = 'fs_diag1_x') # startup.optics
+fs_diag1_x = make_device_with_lookup_table(single_axis_x, lut_suffix='Ax:X', num_rows=10, precision=2)('XF:23IDA-BI:1{FS:1', name = 'fs_diag1_x') # startup.optics (DONE)
 
 # Beam Position Monitor
 bpm = BPM('XF:23ID-ID{BPM}Val:', name = 'bpm') # startup/accelerator (DONE)
@@ -446,10 +446,27 @@ cam_fs1_hdf5 = add_cam_rois(StandardProsilicaWithHDF5('XF:23IDA-BI:1{FS:1-Cam:1}
 
 
 def make_ROI_patches(num_patches, header, H1=0, V1=0):
+    """ Creates a list of ROI patches based on the camera configuration in the header.
+
+    Parameters:
+    ----------
+    num_patches : int   
+        Number of ROI patches to create.
+    header : Header
+        The scan header containing the camera configuration.
+    H1 : int, optional  
+        Horizontal offset to adjust the ROI positions (default is 0).
+    V1 : int, optional  
+        Vertical offset to adjust the ROI positions (default is 0).
+    Returns:
+    -------
+    list
+        List of matplotlib.patches.Rectangle objects representing the ROIs.
+    """
     cam_name = header.start['detectors'][0]
     cam_config = header.descriptors[0]['configuration'][cam_name]['data']
 
-    patch_lst = [None]
+    patch_lst = []
 
     for i in range(1, num_patches + 1):
         x = cam_config[f'{cam_name}_roi{i}_min_xyz_min_x'] - H1
@@ -461,16 +478,53 @@ def make_ROI_patches(num_patches, header, H1=0, V1=0):
     return patch_lst
 
 def add_patches(patch_lst, ax):
-    patch_references = [None]
-    for i in range (1, len(patch_lst)):
-        patch_references.append(ax.add_patch(patch_lst[i]))
+    """ Adds patches to the given axes.
+
+    Parameters:
+    ----------
+    patch_lst : list
+        List of patches to be added to the axes.
+    ax : matplotlib.axes.Axes
+        The axes to which the patches will be added.
+    Returns:
+    -------
+    list    
+        List of patch references for the added patches.
+    """
+    patch_references = []
+    for patch in patch_lst:
+        patch_references.append(ax.add_patch(patch))
     return patch_references
 
-def remove_patches(patch_lst):
-    for patch_ref in patch_lst:
+def remove_patches(patch_references):
+    """ Removes patches from the plot.
+
+    Parameters: 
+    ----------
+    patch_references : list
+        List of patch references to be removed from the plot.
+    """
+    for patch_ref in patch_references:
         patch_ref.remove()
 
+# Add ROIs to the image plot
 def plot_img_with_ROI(header, title='Image with ROIs'):
+    """ Plots a fluoscreen image from the scan header and adds ROI patches.
+
+    Parameters:
+    ----------
+    header : Header 
+        The scan header containing the image data and ROI configuration.
+    title : str, optional
+        Title of the plot (default is 'Image with ROIs')
+    
+    Returns:
+    -------
+    ax : matplotlib.axes.Axes   
+        The axes containing the plotted image and ROIs.
+    patch_references : list  
+        List of patch references for the added ROIs.
+    """
     V1, V2, H1, H2 = 460, 960, 1340, 1490
     fig, ax = plt.subplots(1, figsize=(5, 5) ) 
     cam_name = header.start['detectors'][0]
@@ -478,16 +532,29 @@ def plot_img_with_ROI(header, title='Image with ROIs'):
     im = ax.imshow(img[V1:V2, H1:H2], vmin =7500, vmax = 15_000, aspect='auto')
     plt.colorbar(im, ax=ax, shrink = .3)
     patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
-    add_patches(patch_lst, ax)
+    patch_references = add_patches(patch_lst, ax)
+    im.set_cmap('jet')
     ax.set(title=title)
     ax.axis('off')
+    return( ax, patch_references)
 
 # Use count to take a scan of the fluoscreen and plot it as an image with rois
 def make_fluo_img(md):
-    yield from count([cam_fs1_hdf5], md={'purpose':'source check', 'source check':md})
+    yield from count([cam_fs1_hdf5], num=4, md={'purpose':'source check', 'source check':md})
     plot_img_with_ROI(db[-1], title=md)
 
+# Compare two images from the fluoscreen and plot the difference
 def compare_images(h1, h2):
+    """ Compares two fluoscreen images from the scan headers and plots the difference.
+
+    Parameters:
+    ----------
+    h1 : Header 
+        The first scan header containing the image data and ROI configuration.
+    h2 : Header
+        The second scan header containing the image data and ROI configuration.
+    """
+
     V1, V2, H1, H2 = 460, 960, 1340, 1490
     fig, axes = plt.subplots(1,3, figsize=(10, 3) )
     cam_name = h1.start['detectors'][0]
@@ -501,7 +568,7 @@ def compare_images(h1, h2):
         im = ax.imshow(img[V1:V2, H1:H2], vmin =7500, vmax = 15_000, aspect='auto')
         plt.colorbar(im, ax=ax, shrink = .3)
         patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
-        added_patches = add_patches(patch_lst, ax)
+        add_patches(patch_lst, ax)
         ax.set(title=f'Image {i + 1}')
         ax.axis('off')
 
@@ -509,7 +576,7 @@ def compare_images(h1, h2):
     im = ax.imshow((images[1] - images[0])[V1:V2, H1:H2], aspect='auto',)
     plt.colorbar(im, ax=ax, shrink = .3)
     patch_lst = make_ROI_patches(4, header, H1=H1, V1=V1)
-    added_patches = add_patches(patch_lst, ax)
+    add_patches(patch_lst, ax)
     ax.axis('off')
     ax.set(title=f'Difference\n Observable X-angle Shift')
 

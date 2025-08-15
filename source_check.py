@@ -1,10 +1,10 @@
-from bluesky.plan_stubs import null, mv
+from bluesky.plan_stubs import null, mv, mvr
 from bluesky.plans import count
 
 import os, subprocess, inspect
 from rich import print as cprint
 from typing import Callable
-from source_check_devices import *
+from source_check_devices import FE_shutter, m1a, epu1, epu2, FEslt, canter, phaser, fs_diag1_x, cam_fs1_hdf5, make_fluo_img
 
 
 # sd.baseline.extend([FEslt.x.gap.readback, 
@@ -32,36 +32,6 @@ def colored(text, tint='white', attrs=[], end=None):
         print(text)
 
 
-def error_msg(text, end=None):
-    '''Red text'''
-    colored(text, 'red1', end=end)
-def warning_msg(text, end=None):
-    '''Yellow text'''
-    colored(text, 'yellow', end=end)
-def go_msg(text, end=None):
-    '''Green text'''
-    colored(text, 'green', end=end)
-def url_msg(text, end=None):
-    '''Underlined text, intended for URL decoration...'''
-    colored(text, 'underline', end=end)
-def bold_msg(text, end=None):
-    '''Bright yellow text'''
-    colored(text, 'yellow2', end=end)
-def verbosebold_msg(text, end=None):
-    '''Bright cyan text'''
-    colored(text, 'cyan', end=end)
-def list_msg(text, end=None):
-    '''Dark cyan text'''
-    colored(text, 'bold cyan', end=end)
-def disconnected_msg(text, end=None):
-    '''Purple text'''
-    colored(text, 'magenta3', end=end)
-def info_msg(text, end=None):
-    '''Brown text'''
-    colored(text, 'light_goldenrod2', end=end)
-def cold_msg(text, end=None):
-    '''Light blue text'''
-    colored(text, 'blue', end=end)
 def whisper(text, end=None):
     '''Light gray text'''
     colored(text, 'bold black', end=end)
@@ -70,13 +40,21 @@ def print_dict(dict):
     for key in dict:
         print(f"\t{key}: {dict[key]}")
 
+# A mapping of canter states to coordinates for FE_shutter and m1a starting positions
+canter_map = {"canted" : {"FEslt" : {"x.gap" : 7.000, "y.gap" : 1.800, "x.cent" : 0, "y.cent" : 0.650}, "m1a" : {"x" : 0, "y" : -2.410, "z" : -27.620, "pit" : 6.175, "yaw" : 0, "rol" : 2.400}}, 
+                "straight" : {"FEslt" : {"x.gap" : 4.000, "y.gap" : 1.800, "x.cent" : 0, "y.cent" : 0.650}, "m1a" : {"x" : 0, "y" : 0.800, "z" : 27.500, "pit" : 6.525, "yaw" : 0, "rol" : 4.400}}}
+
+def make_fluo_img(md):
+    
+    yield from count([cam_fs1_hdf5], num=4, md={'purpose':'source check', 'source check':md})
 
 class SourceCheck():
     
-
+    
 
     def source_check_manual(self):
-        '''Prompt the user to do a thing.
+        '''
+        Print the menu for the source check and prompt the user for a choice.
         '''
 
         actions = {'0': ('Prep',   'preparation'),
@@ -92,9 +70,7 @@ class SourceCheck():
                    '10': ('Quit',   'Quit')
         }
         
-        print('''
-  CHOICES                       
-======================================''')
+        print('\n  CHOICES\n======================================''')
 
         for i in range(0,11):
             text  = actions[str(i)][1]
@@ -114,12 +90,7 @@ class SourceCheck():
         if choice in actions:
             thing = f'do_{actions[choice][0]}'
         return getattr(self, thing, lambda: bailout)()
-    
-    m1a_ops = {}
-    FEslt_ops = {}
-    FSdiag_ops = {}
-    epu1_ops = {}
-    epu2_ops = {}
+
 
     def end_step(self, next_step, next_step_name):
         """Handle the end of a source check step.
@@ -146,7 +117,7 @@ class SourceCheck():
             case _:
                 return 
 
-
+         
     def pause(self, prompt, action : tuple | Callable, current_step : Callable, current_prompt : Callable):
         """Handle an interruption in the source check process.
         
@@ -185,6 +156,7 @@ class SourceCheck():
                         return False
             
 
+    # THIS FUNCTION IS CURRENTLY SET TO PRINT OUT THE YIELDS RATHER THAN YIELD THEM
     def confirm_default_n(self, prompt, action : tuple | Callable, current_step : Callable):
         """Prompt the user to confirm an action with a default response of 'n'.
             Performs action and returns True if the user confirms otherwise returns 
@@ -204,11 +176,11 @@ class SourceCheck():
                         if isinstance(action, Callable):
                             #  yield from action()
                              print(f"yield from {action.__name__}")
-                        else:
+                        if isinstance(action, tuple):
                             plan, motor, target = action
                             # yield from plan(signal, target)
                             print(f"yield from {plan.__name__}({motor}, {target})")
-                            return True
+                        return True
 
                 case _ : return self.pause(prompt, action, current_step, self.confirm_default_n)
         
@@ -238,10 +210,10 @@ class SourceCheck():
                             plan, motor, target = action
                             # yield from plan(signal, target)
                             print(f"yield from {plan.__name__}({motor}, {target})")
-                            return True
+                        return True
 
     def prompt_and_act(self, prompts, actions, defaults, current_step):
-        """Prompt the user with a list of prompts for actions, and execute the actions based on the user's input.
+        """Prompt the user with a list of prompts and actions, and execute the actions based on the user's input.
         
         Parameters
         ----------
@@ -264,20 +236,26 @@ class SourceCheck():
         return True
 
 
+
+    ### --------------- STEPS START HERE --------------- ###
+
+
     def do_Prep(self):
 
         print("\nSource check preparation")
         print("--------------------------")
 
-        # Make sure FE shutter is closed
-        print("\n\tFE Shutter")
-        print("\t-----------")
-        if FE_shutter.status.get() != 'Closed':
-            if not self.confirm_default_y("\n\tClose FE Shutter? ([y]/n)", (mv, FE_shutter, 'Close'), self.do_Prep): return
-            
+        # Check canter position
+        if (1 > canter.get()) and (canter.get() > -1): # 'canted' position should be 0 but readback value deviates
+            canting_pos = "canted" 
         else:
-            print("\n\tFE Shutter is closed")
+            canting_pos = "straight"
         
+        print("\n\tCheck Canting Position")
+        print("\t------------------------")
+        if not self.confirm_default_y(f"\n\tThe current canter position is <{canting_pos}>. Proceed ([y]/n)?", lambda:None, self.do_Prep): return
+
+
         # Record starting positions using setpoints
         print("\n\tRecord OPS")
         print("\t-----------")
@@ -293,21 +271,30 @@ class SourceCheck():
                      "x_cent" : round(FEslt.x.cent.setpoint.get(), 4), 
                      "y_cent" : round(FEslt.y.cent.setpoint.get(), 4)}
         
-        FSdiag_ops = {"x" : round(fs_diag1_x.x.user_setpoint.get(), 4)}
-        
-        epu1_ops = {"gap" : round(epu1.gap.setpoint.get(), 4), "phase" : round(epu1.phase.readback.get(), 4)}
-        epu2_ops = {"gap" : round(epu2.gap.setpoint.get(), 4), "phase" : round(epu2.phase.readback.get(), 4)}
+        epu1_ops = {"gap" : round(epu1.gap.readback.get(), 4), "phase" : round(epu1.phase.readback.get(), 4)}
+        epu2_ops = {"gap" : round(epu2.gap.readback.get(), 4), "phase" : round(epu2.phase.readback.get(), 4)}
+
+        RE.md['source_check_noc'] = {"m1a" : m1a_ops, "FEslt" : FEslt_ops, "epu1" : epu1_ops, "epu2" : epu2_ops, "canter" : canting_pos}
         
         print(f"\n\tRecording current M1a position as \n")
         print_dict(m1a_ops)
         print(f"\n\tRecording current FEslt position as operating position as \n")
         print_dict(FEslt_ops)
-        print(f"\n\tRecording current FSdiag position as \n")
-        print_dict(FSdiag_ops)
         print(f"\n\tRecording current EPU1 position as \n")
         print_dict(epu1_ops)
         print(f"\n\tRecording current EPU1 position as \n")
         print_dict(epu2_ops)
+
+        
+
+        # Make sure FE shutter is closed
+        print("\n\tFE Shutter")
+        print("\t-----------")
+        if FE_shutter.status.get() != 'Closed':
+            if not self.confirm_default_y("\n\tClose FE Shutter? ([y]/n)", (mv, FE_shutter, 'Cls'), self.do_Prep): return
+            
+        else:
+            print("\n\tFE Shutter is closed")
 
         # Make sure EPU phases are 0
         print("\n\tEPU Phases")
@@ -339,29 +326,24 @@ class SourceCheck():
         print("--------------------------")
 
         prompts = [
-            
-            "\n\tMove FSdiag to 'Both'. Confirm ([y]/n).",
             "\n\tSet EPU1 Gap to 100. Confirm ([y]/n).",
             "\n\tSet EPU2 Gap to 100. Confirm ([y]/n).",
+            "\n\tOpen FE slits. Confirm (y/[n]).",
             "\n\tMove m1a to 'out' position. Confirm (y/[n]).",
             "\n\tOpen FE shutter. Confirm (y/[n]).",
-            "\n\tTake photo of FSdiag. Confirm ([y]/n).",
-            "\n\tOpen FE slits. Confirm (y/[n])."
-            "\n\tTake photo of FSdiag. Confirm ([y]/n).",
+            "\n\tTake photo of FSdiag. Confirm ([y]/n)."
         ]
 
         actions = [
-            (mv, fs_diag1_x, 'Both'),
             (mv, epu1.gap, 100),
             (mv, epu2.gap, 100),
-            m1a.mv_out,
-            (mv, FE_shutter, 'Open'),
-            make_fluo_img,
-            FEslt.mv_open,
-            make_fluo_img
+            (mvr, FEslt.y.gap, -3),
+            (mvr, m1a.y, -6),
+            (mv, FE_shutter, 'Opn'),
+            make_fluo_img('BM')
         ]
         
-        defaults = ['y', 'y', 'y', 'n', 'n', 'y', 'n', 'y']
+        defaults = ['y', 'y', 'n', 'n', 'n', 'y']
 
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step1): return
 
@@ -371,7 +353,7 @@ class SourceCheck():
 
     def do_Step2(self):
 
-        print("\nStep 2 - ios source\n")
+        print("\nStep 2 - IOS source\n")
         print("--------------------------")
 
         prompts = [
@@ -381,7 +363,7 @@ class SourceCheck():
 
         actions = [
             (mv, epu1.gap, 82),
-            make_fluo_img
+            make_fluo_img('EPU:2')
         ]
 
         defaults = ['y', 'y']
@@ -406,14 +388,14 @@ class SourceCheck():
         actions = [
             (mv, epu1.gap, 100),
             (mv, epu2.gap, 85),
-            make_fluo_img
+            make_fluo_img('EPU:1')
         ]
 
         defaults = ['y', 'y', 'y']
 
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step3): return
         print()
-        self.end_step(self.do_Step3, "Source")
+        self.end_step(self.do_Step4, "Source")
 
 
     def do_Step4(self):
@@ -428,7 +410,7 @@ class SourceCheck():
 
         actions = [
             (mv, epu1.gap, 82),
-            make_fluo_img
+            make_fluo_img('BOTH')
         ]
 
         defaults = ['y', 'y']
@@ -436,11 +418,11 @@ class SourceCheck():
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step4): return
 
         print()
-        self.end_step(self.do_Step3, "Check Slits")
+        self.end_step(self.do_Step5, "Check Slits")
 
     def do_Step5(self):
         
-        print("\nStep 5 - check slits]")
+        print("\nStep 5 - check slits")
         print("--------------------------")
 
         prompts = [
@@ -449,8 +431,8 @@ class SourceCheck():
         ]
 
         actions = [
-            (mv, FEslt.x.gap, self.FEslt_ops['x_gap']),
-            make_fluo_img
+            (mv, FEslt.x.gap, RE.md["source check"]["FEslt"]['x_gap']),
+            make_fluo_img('BOTH FEslt')
         ]
 
         defaults = ['n', 'y']
@@ -458,7 +440,7 @@ class SourceCheck():
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step5): return
 
         print()
-        self.end_step(self.do_Step3, "Check M1a Position")
+        self.end_step(self.do_Step6, "Check M1a Position")
 
     def do_Step6(self):
 
@@ -475,9 +457,9 @@ class SourceCheck():
 
         actions = [
             (mv, FE_shutter, 'Close'),
-            (mv, m1a, self.m1a_ops),
+            (mv, m1a, RE.md["source_check"]["m1a"]),
             FEslt.mv_open,
-            make_fluo_img
+            make_fluo_img('EPU:1 M1A FEslt')
         ]
 
         defaults = ['y', 'n', 'n', 'y']
@@ -485,7 +467,7 @@ class SourceCheck():
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step6): return
 
         print()
-        self.end_step(self.do_Step3, "Check Pink Beam")
+        self.end_step(self.do_Step7, "Check Pink Beam")
 
     def do_Step7(self):
 
@@ -504,7 +486,7 @@ class SourceCheck():
             (mv, FE_shutter, 'Close'),
             (mv, fs_diag1_x, 'Pink Beam'),
             (mv, FE_shutter, 'Open'),
-            make_fluo_img
+            make_fluo_img('PINK')
         ]
 
         defaults = ['y', 'n', 'n', 'y']
@@ -513,7 +495,7 @@ class SourceCheck():
         
 
         print()
-        self.end_step(self.do_Step3, "Check Pink Beam & Slits")
+        self.end_step(self.do_Step8, "Check Pink Beam & Slits")
 
     def do_Step8(self):
 
@@ -527,9 +509,9 @@ class SourceCheck():
         ]
 
         actions = [
-            (mv, FE_shutter, 'Close'),
-            (mv, FEslt, self.FEslt_ops),
-            make_fluo_img
+            (mv, FE_shutter, 'Cls'),
+            (mv, FEslt, RE.md['source check'].FEslt_ops),
+            make_fluo_img('PINK FEslit')
         ]
 
         defaults = ['y', 'n', 'y']
@@ -537,7 +519,7 @@ class SourceCheck():
         if not self.prompt_and_act(prompts, actions, defaults, self.do_Step8): return
 
         print()
-        self.end_step(self.do_Step3, "Return to OPS")
+        self.end_step(self.do_Step9, "Return to OPS")
 
 
     def do_ReturnToOPS(self):
@@ -552,14 +534,18 @@ class SourceCheck():
         ]
 
         actions = [
-            (mv, FE_shutter, 'Close'),
+            (mv, FE_shutter, 'Cls'),
             (mv, fs_diag1_x, 'out'),
-            (mv, FE_shutter, 'Open')
+            (mv, FE_shutter, 'Opn')
         ]
 
         defaults = ['y', 'y', 'n']
 
         if not self.prompt_and_act(prompts, actions, defaults, self.do_ReturnToOPS): return
+        RE.md.pop("source_check")
+
+
+
 
     def do_Quit(self):
         return
