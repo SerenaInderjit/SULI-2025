@@ -98,12 +98,39 @@ def get_lookup(*args, lut_suffix : str, num_rows : int, col_suffixes : list[str]
     return DynamicDeviceComponent(defn)
 
 
-def make_device_with_lookup_table(base : Device, lut_suffix: str, num_rows: int, precision : int = 20, *args, **kwargs):
+def make_epics_motor_with_lookup_table(motor_prefix: str, motor_name: str, 
+        lut_suffix: str, num_rows: int, precision: int = 20, *args, **kwargs):
+    """Create a new device class that extends an EpicsMotor with a lookup table and position selection.
+
+    Parameters
+    ----------
+    motor_prefix : str
+        The EPICS prefix for the motor.
+    motor_name : str
+        The attribute name for the motor in the device.
+    lut_suffix : str
+        The lookup table suffix to be added to the prefix.
+    num_rows : int
+        The number of rows in the lookup table.
+    precision : int, optional
+        The precision for comparing motor values, by default 20.
+    
+    Returns
+    -------
+    DeviceWithLookup
+        A new class that adds the lookup table and position selection functionality to an EpicsMotor.
+    """
+
+    epics_motor_type = type("EpicsMotorDevice", (Device,), {motor_name: Cpt(EpicsMotor, motor_prefix, name=motor_name, labels=["motor"])})    
+    return make_device_with_lookup_table(epics_motor_type, lut_suffix, num_rows, precision, *args, **kwargs)
+
+
+def make_device_with_lookup_table(base : type[Device], lut_suffix: str, num_rows: int, precision : int = 20, *args, **kwargs):
     """Create a new device class that extends the given cls with a lookup table and position selection.
 
     Parameters
     ----------
-    base : Device
+    base : type[Device]
         The base device class to extend.
     lut_suffix : str
         The lookup table suffix to be added to the prefix.
@@ -117,9 +144,9 @@ def make_device_with_lookup_table(base : Device, lut_suffix: str, num_rows: int,
     DeviceWithLookup
         A new class that adds the lookup table and position selection functionality to cls.
     """
-
     # Gather motor components, column names, and column suffixes from cls
     motor_components = OrderedDict()
+    general_components = OrderedDict()
     col_names = []
     col_suffixes = []
     for key in base.__dict__['component_names']:
@@ -128,6 +155,8 @@ def make_device_with_lookup_table(base : Device, lut_suffix: str, num_rows: int,
             motor_components[key] = base.__dict__[key]
             col_names.append(key)
             col_suffixes.append(signal.suffix)
+        else:
+            general_components[key] = base.__dict__[key]
 
     
     pos_lookup = OrderedDict(pos_lookup = get_lookup(lut_suffix=lut_suffix, num_rows=num_rows, col_suffixes=col_suffixes, col_names = col_names))
@@ -354,7 +383,7 @@ def make_device_with_lookup_table(base : Device, lut_suffix: str, num_rows: int,
         )
 
     # Add new components
-    clsdict = clsdict | motor_components | pos_sel | pos_lookup
+    clsdict = clsdict | motor_components | pos_sel | pos_lookup | general_components
     
     # Create the new class with the new  components and methods
     DeviceWithLookup = type("DeviceWithLookup", (base,), clsdict, **{})
